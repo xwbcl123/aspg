@@ -1,0 +1,33 @@
+{
+  "name": "aspg",
+  "version": "0.2.0",
+  "description": "Agent Skills Protocol Guardian — lightweight CLI for multi-AI skill governance",
+  "type": "module",
+  "bin": {
+    "aspg": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": ["ai", "cli", "skills", "protocol", "guardian"],
+  "author": "Martin",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
