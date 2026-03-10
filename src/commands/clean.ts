@@ -1,12 +1,12 @@
 /**
  * aspg clean — Remove all ASPG-generated artifacts
  * GUARANTEE: .agents/skills/ is NEVER deleted.
+ * Traverses all vendors (including native) to clean up legacy bridges.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { removeLink } from '../platform.js';
-
-const VENDOR_LINKS = ['.claude/skills', '.opencode/skills', '.codex/skills'];
+import { removeLink, isStaleLink, isAspgManaged } from '../platform.js';
+import { SSOT_DIR, VENDOR_REGISTRY } from '../vendors.js';
 
 interface CleanOptions {
   dryRun?: boolean;
@@ -20,25 +20,30 @@ export async function cleanCommand(opts: CleanOptions = {}): Promise<void> {
 
   let removed = 0;
 
-  for (const linkDir of VENDOR_LINKS) {
-    const linkPath = path.join(root, linkDir);
+  // Iterate all vendors — native vendors may have legacy bridges to clean
+  for (const [vendor, def] of Object.entries(VENDOR_REGISTRY)) {
+    const linkPath = path.join(root, def.linkDir);
 
     if (!fs.existsSync(linkPath) && !isStaleLink(linkPath)) {
       continue;
     }
 
     if (dryRun) {
-      console.log(`[dry-run] Would remove ${linkDir}`);
-      removed++;
+      if (isAspgManaged(linkPath)) {
+        console.log(`[dry-run] Would remove ${def.linkDir} (${vendor})`);
+        removed++;
+      } else {
+        console.log(`[dry-run] Would skip ${def.linkDir} — not ASPG-managed (${vendor})`);
+      }
       continue;
     }
 
     const didRemove = removeLink(linkPath);
     if (didRemove) {
-      console.log(`✓ Removed ${linkDir}`);
+      console.log(`✓ Removed ${def.linkDir} (${vendor})`);
       removed++;
     } else {
-      console.log(`⚠ ${linkDir} exists but is not ASPG-managed — skipped`);
+      console.log(`⚠ ${def.linkDir} exists but is not ASPG-managed — skipped (${vendor})`);
     }
   }
 
@@ -51,17 +56,8 @@ export async function cleanCommand(opts: CleanOptions = {}): Promise<void> {
   console.log('💡 Gemini: Run manually → gemini skills unlink');
 
   // Confirm SSOT safety
-  const ssotPath = path.join(root, '.agents/skills');
+  const ssotPath = path.join(root, SSOT_DIR);
   if (fs.existsSync(ssotPath)) {
-    console.log(`\n✓ .agents/skills/ preserved (${fs.readdirSync(ssotPath).length} items)`);
-  }
-}
-
-function isStaleLink(p: string): boolean {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
+    console.log(`\n✓ ${SSOT_DIR}/ preserved (${fs.readdirSync(ssotPath).length} items)`);
   }
 }

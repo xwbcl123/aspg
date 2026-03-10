@@ -7,8 +7,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { parseDocument } from 'yaml';
 import { SkillFrontmatterSchema, type SkillFrontmatter } from '../schema.js';
-
-const SSOT_DIR = '.agents/skills';
+import { SSOT_DIR } from '../vendors.js';
 
 interface CompatOptions {
   strict?: boolean;

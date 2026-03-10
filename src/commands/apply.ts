@@ -1,16 +1,10 @@
 /**
- * aspg apply — Rescan SSOT and refresh all vendor bridges (idempotent)
+ * aspg apply — Rescan SSOT and refresh bridge vendor links (idempotent)
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createLink, isValidLink, removeLink } from '../platform.js';
-
-const SSOT_DIR = '.agents/skills';
-const VENDOR_LINKS: Record<string, string> = {
-  claude: '.claude/skills',
-  opencode: '.opencode/skills',
-  codex: '.codex/skills',
-};
+import { createLink, isValidLink, removeLink, isStaleLink } from '../platform.js';
+import { SSOT_DIR, getBridgeVendors } from '../vendors.js';
 
 interface ApplyOptions {
   dryRun?: boolean;
@@ -37,8 +31,8 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
 
   console.log(`Found ${skills.length} skill(s) in SSOT: ${skills.join(', ') || '(none)'}`);
 
-  // Refresh vendor bridges
-  for (const [vendor, linkDir] of Object.entries(VENDOR_LINKS)) {
+  // Refresh bridge vendor links only
+  for (const [vendor, linkDir] of Object.entries(getBridgeVendors())) {
     const linkPath = path.join(root, linkDir);
 
     if (isValidLink(linkPath, ssotPath)) {
@@ -74,13 +68,4 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
   // Gemini hint
   console.log('');
   console.log('💡 Gemini: Run manually → gemini skills link .agents/skills');
-}
-
-function isStaleLink(p: string): boolean {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
-  }
 }

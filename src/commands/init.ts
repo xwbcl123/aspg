@@ -1,17 +1,11 @@
 /**
  * aspg init — Initialize project infrastructure
- * Creates .agents/skills/ SSOT and vendor symlinks.
+ * Creates .agents/skills/ SSOT and vendor bridges for bridge vendors only.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createLink } from '../platform.js';
-
-const SSOT_DIR = '.agents/skills';
-const VENDOR_LINKS: Record<string, string> = {
-  claude: '.claude/skills',
-  opencode: '.opencode/skills',
-  codex: '.codex/skills',
-};
+import { SSOT_DIR, getBridgeVendors, getNativeVendors } from '../vendors.js';
 
 export async function initCommand(): Promise<void> {
   const root = process.cwd();
@@ -25,8 +19,8 @@ export async function initCommand(): Promise<void> {
     console.log(`· ${SSOT_DIR}/ already exists`);
   }
 
-  // 2. Create vendor symlinks
-  for (const [vendor, linkDir] of Object.entries(VENDOR_LINKS)) {
+  // 2. Create vendor bridges (bridge vendors only)
+  for (const [vendor, linkDir] of Object.entries(getBridgeVendors())) {
     const linkPath = path.join(root, linkDir);
 
     if (fs.existsSync(linkPath)) {
@@ -47,7 +41,12 @@ export async function initCommand(): Promise<void> {
     }
   }
 
-  // 3. Gemini manual hint
+  // 3. Log native vendors (skipped)
+  for (const [vendor] of Object.entries(getNativeVendors())) {
+    console.log(`· Skipping ${vendor} (native — reads ${SSOT_DIR} directly)`);
+  }
+
+  // 4. Gemini manual hint
   console.log('');
   console.log('💡 Gemini: Run manually → gemini skills link .agents/skills');
 }

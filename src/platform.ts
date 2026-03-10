@@ -183,6 +183,36 @@ function getFileList(dir: string): string[] {
   return entries;
 }
 
+/**
+ * Check if a path is an ASPG-managed link (symlink, junction, or copy with marker).
+ * Returns true if the path exists and was created by ASPG.
+ */
+export function isAspgManaged(linkPath: string): boolean {
+  const absLink = path.resolve(linkPath);
+  try {
+    const stat = fs.lstatSync(absLink);
+    if (stat.isSymbolicLink()) return true;
+    if (stat.isDirectory()) {
+      return fs.existsSync(path.join(absLink, COPY_MARKER));
+    }
+  } catch {
+    // Path does not exist
+  }
+  return false;
+}
+
+/**
+ * Check if a path has a dangling lstat entry (e.g. broken symlink).
+ */
+export function isStaleLink(p: string): boolean {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function copyDirSync(src: string, dst: string): void {
   fs.mkdirSync(dst, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {

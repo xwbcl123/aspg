@@ -5,8 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseDocument } from 'yaml';
 import { SkillFrontmatterSchema } from '../schema.js';
-
-const SSOT_DIR = '.agents/skills';
+import { SSOT_DIR } from '../vendors.js';
 
 export async function lintCommand(): Promise<void> {
   const root = process.cwd();

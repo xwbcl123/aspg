@@ -6,8 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { parseDocument, stringify } from 'yaml';
 import { SkillFrontmatterSchema, isVendorField, STANDARD_FIELDS } from '../schema.js';
-
-const SSOT_DIR = '.agents/skills';
+import { SSOT_DIR } from '../vendors.js';
 
 type Vendor = 'claude' | 'codex' | 'gemini';
 
