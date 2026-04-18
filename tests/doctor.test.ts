@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createLink } from '../src/platform.js';
+import { createLink, COPY_MARKER } from '../src/platform.js';
 
 let tmpDir: string;
 let origCwd: string;
@@ -96,5 +96,19 @@ describe('doctor — bridge vendor health check', () => {
     const { stdout } = await runDoctor();
     expect(stdout).toContain('not created');
     expect(stdout).toContain('claude');
+  });
+
+  it('should report SSOT marker pollution distinctly from copy out-of-sync', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.writeFileSync(path.join(ssotPath, 'skill.txt'), 'fresh');
+    fs.writeFileSync(path.join(ssotPath, COPY_MARKER), 'pollution');
+    fs.mkdirSync(claudePath, { recursive: true });
+    fs.writeFileSync(path.join(claudePath, COPY_MARKER), ssotPath, 'utf-8');
+
+    const { stderr } = await runDoctor();
+    expect(stderr).toContain('SSOT polluted by copy-fallback marker');
+    expect(stderr).toContain('copy fallback check blocked by SSOT marker pollution');
+    expect(stderr).not.toContain('copy fallback, OUT OF SYNC');
   });
 });

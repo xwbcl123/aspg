@@ -4,7 +4,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { getLinkMethod, isValidLink, isCopyInSync, isStaleLink } from '../platform.js';
+import { COPY_MARKER, getLinkMethod, isValidLink, isCopyInSync, isStaleLink, hasCopyMarker } from '../platform.js';
 import { SSOT_DIR, VENDOR_REGISTRY } from '../vendors.js';
 
 export async function doctorCommand(): Promise<void> {
@@ -24,6 +24,14 @@ export async function doctorCommand(): Promise<void> {
     .filter((d) => d.isDirectory())
     .map((d) => d.name);
   console.log(`✓ ${SSOT_DIR}/ exists (${skills.length} skill(s))`);
+
+  const ssotMarkerPath = path.join(ssotPath, COPY_MARKER);
+  const hasSsotMarker = hasCopyMarker(ssotPath);
+  if (hasSsotMarker) {
+    console.error(`✗ ${ssotMarkerPath} — SSOT polluted by copy-fallback marker`);
+    console.error('  Run "aspg clean" to remove SSOT marker pollution');
+    hasIssues = true;
+  }
 
   // 2. Check vendor links (bridge vendors only for link health)
   for (const [vendor, def] of Object.entries(VENDOR_REGISTRY)) {
@@ -61,8 +69,13 @@ export async function doctorCommand(): Promise<void> {
       if (isCopyInSync(linkPath, ssotPath)) {
         console.log(`✓ ${def.linkDir} — copy fallback, in sync (${vendor})`);
       } else {
-        console.error(`✗ ${def.linkDir} — copy fallback, OUT OF SYNC (${vendor})`);
-        console.error(`  Run "aspg apply" to refresh`);
+        if (hasSsotMarker) {
+          console.error(`✗ ${def.linkDir} — copy fallback check blocked by SSOT marker pollution (${vendor})`);
+          console.error('  Clean SSOT marker pollution first, then rerun doctor/apply');
+        } else {
+          console.error(`✗ ${def.linkDir} — copy fallback, OUT OF SYNC (${vendor})`);
+          console.error(`  Run "aspg apply" to refresh`);
+        }
         hasIssues = true;
       }
       continue;

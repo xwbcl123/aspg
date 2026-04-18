@@ -79,6 +79,16 @@ describe('clean — native vendor legacy bridge', () => {
     await runClean();
     expect(fs.existsSync(ssotPath)).toBe(true);
   });
+
+  it('should remove SSOT marker pollution without deleting SSOT', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    fs.writeFileSync(path.join(ssotPath, '.aspg-copy-fallback'), 'pollution');
+
+    const { stdout } = await runClean();
+    expect(stdout).toContain('SSOT marker pollution');
+    expect(fs.existsSync(ssotPath)).toBe(true);
+    expect(fs.existsSync(path.join(ssotPath, '.aspg-copy-fallback'))).toBe(false);
+  });
 });
 
 describe('clean --dry-run — preview accuracy', () => {

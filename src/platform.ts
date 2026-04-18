@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const COPY_MARKER = '.aspg-copy-fallback';
+export const COPY_MARKER = '.aspg-copy-fallback';
 
 export type LinkMethod = 'symlink' | 'junction' | 'copy';
 
@@ -153,8 +153,8 @@ export function isCopyInSync(copyPath: string, ssotPath: string): boolean {
   if (!fs.existsSync(marker)) return false;
 
   // Compare file lists (shallow)
-  const ssotFiles = getFileList(ssotPath);
-  const copyFiles = getFileList(absPath).filter((f) => f !== COPY_MARKER);
+  const ssotFiles = getFileList(ssotPath, { ignoreCopyMarker: true });
+  const copyFiles = getFileList(absPath, { ignoreCopyMarker: true });
   if (ssotFiles.length !== copyFiles.length) return false;
 
   for (const file of ssotFiles) {
@@ -169,13 +169,37 @@ export function isCopyInSync(copyPath: string, ssotPath: string): boolean {
   return true;
 }
 
-function getFileList(dir: string): string[] {
+export function hasCopyMarker(dir: string): boolean {
+  return fs.existsSync(path.join(path.resolve(dir), COPY_MARKER));
+}
+
+export function removeCopyMarker(dir: string, dryRun = false): boolean {
+  const markerPath = path.join(path.resolve(dir), COPY_MARKER);
+  if (!fs.existsSync(markerPath)) return false;
+  if (dryRun) return true;
+  fs.rmSync(markerPath, { force: true });
+  return true;
+}
+
+export function syncCopyFallback(target: string, copyPath: string, dryRun = false): void {
+  const absTarget = path.resolve(target);
+  const absCopy = path.resolve(copyPath);
+  if (dryRun) return;
+
+  fs.mkdirSync(absCopy, { recursive: true });
+  syncDirContents(absTarget, absCopy);
+  fs.writeFileSync(path.join(absCopy, COPY_MARKER), absTarget, 'utf-8');
+}
+
+function getFileList(dir: string, opts: { ignoreCopyMarker?: boolean } = {}): string[] {
   if (!fs.existsSync(dir)) return [];
+  const { ignoreCopyMarker = false } = opts;
   const entries: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (ignoreCopyMarker && entry.name === COPY_MARKER) continue;
     if (entry.isFile()) entries.push(entry.name);
     if (entry.isDirectory()) {
-      for (const sub of getFileList(path.join(dir, entry.name))) {
+      for (const sub of getFileList(path.join(dir, entry.name), opts)) {
         entries.push(path.join(entry.name, sub));
       }
     }
@@ -216,10 +240,37 @@ export function isStaleLink(p: string): boolean {
 function copyDirSync(src: string, dst: string): void {
   fs.mkdirSync(dst, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.name === COPY_MARKER) continue;
     const srcPath = path.join(src, entry.name);
     const dstPath = path.join(dst, entry.name);
     if (entry.isDirectory()) {
       copyDirSync(srcPath, dstPath);
+    } else {
+      fs.copyFileSync(srcPath, dstPath);
+    }
+  }
+}
+
+function syncDirContents(src: string, dst: string): void {
+  const srcEntries = fs.readdirSync(src, { withFileTypes: true })
+    .filter((entry) => entry.name !== COPY_MARKER);
+  const srcNames = new Set(srcEntries.map((entry) => entry.name));
+
+  if (fs.existsSync(dst)) {
+    for (const entry of fs.readdirSync(dst, { withFileTypes: true })) {
+      if (entry.name === COPY_MARKER) continue;
+      if (!srcNames.has(entry.name)) {
+        fs.rmSync(path.join(dst, entry.name), { recursive: true, force: true });
+      }
+    }
+  }
+
+  for (const entry of srcEntries) {
+    const srcPath = path.join(src, entry.name);
+    const dstPath = path.join(dst, entry.name);
+    if (entry.isDirectory()) {
+      fs.mkdirSync(dstPath, { recursive: true });
+      syncDirContents(srcPath, dstPath);
     } else {
       fs.copyFileSync(srcPath, dstPath);
     }

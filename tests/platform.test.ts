@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createLink, removeLink, isValidLink, getLinkMethod } from '../src/platform.js';
+import { createLink, removeLink, isValidLink, getLinkMethod, isCopyInSync, COPY_MARKER } from '../src/platform.js';
 
 let tmpDir: string;
 
@@ -111,5 +111,45 @@ describe('getLinkMethod', () => {
     const dir = path.join(tmpDir, 'regular');
     fs.mkdirSync(dir);
     expect(getLinkMethod(dir)).toBeNull();
+  });
+});
+
+describe('copy fallback marker handling', () => {
+  it('should ignore copy marker when checking sync', () => {
+    const ssot = path.join(tmpDir, 'ssot');
+    const copy = path.join(tmpDir, 'copy');
+    fs.mkdirSync(ssot, { recursive: true });
+    fs.mkdirSync(copy, { recursive: true });
+
+    fs.writeFileSync(path.join(ssot, 'skill.txt'), 'hello');
+    fs.writeFileSync(path.join(ssot, COPY_MARKER), 'pollution');
+    fs.writeFileSync(path.join(copy, 'skill.txt'), 'hello');
+    fs.writeFileSync(path.join(copy, COPY_MARKER), ssot, 'utf-8');
+
+    expect(isCopyInSync(copy, ssot)).toBe(true);
+  });
+
+  it('should not propagate marker from source during copy fallback creation', async () => {
+    const ssot = path.join(tmpDir, 'ssot');
+    const copy = path.join(tmpDir, 'copy');
+    fs.mkdirSync(ssot, { recursive: true });
+    fs.writeFileSync(path.join(ssot, 'skill.txt'), 'hello');
+    fs.writeFileSync(path.join(ssot, COPY_MARKER), 'pollution');
+
+    const originalSymlinkSync = fs.symlinkSync;
+    const symlinkMock = vi.spyOn(fs, 'symlinkSync');
+    symlinkMock.mockImplementation(((...args: Parameters<typeof fs.symlinkSync>) => {
+      const type = args[2];
+      if (type === 'dir' || type === 'junction') {
+        throw new Error('force copy fallback');
+      }
+      return originalSymlinkSync(...args);
+    }) as typeof fs.symlinkSync);
+
+    const result = await createLink(ssot, copy);
+    expect(result.method).toBe('copy');
+    expect(fs.existsSync(path.join(copy, COPY_MARKER))).toBe(true);
+    expect(fs.existsSync(path.join(copy, 'skill.txt'))).toBe(true);
+    expect(fs.readFileSync(path.join(copy, COPY_MARKER), 'utf-8').trim()).toBe(path.resolve(ssot));
   });
 });

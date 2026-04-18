@@ -113,4 +113,26 @@ describe('apply — native vendor regression guard', () => {
     // The marker should remain untouched
     expect(fs.existsSync(path.join(opencodePath, '.aspg-copy-fallback'))).toBe(true);
   });
+
+  it('should remove SSOT marker pollution before refreshing bridges', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    fs.writeFileSync(path.join(ssotPath, '.aspg-copy-fallback'), 'pollution');
+
+    const { stdout } = await runApply();
+    expect(stdout).toContain('SSOT marker pollution');
+    expect(fs.existsSync(path.join(ssotPath, '.aspg-copy-fallback'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.claude', 'skills'))).toBe(true);
+  });
+
+  it('should refresh stale copy-fallback bridge for claude', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(claudePath, { recursive: true });
+    fs.writeFileSync(path.join(ssotPath, 'skill.txt'), 'fresh');
+    fs.writeFileSync(path.join(claudePath, '.aspg-copy-fallback'), ssotPath, 'utf-8');
+
+    const { stdout } = await runApply();
+    expect(stdout).toContain('Refreshed .claude/skills from .agents/skills/ [copy]');
+    expect(fs.existsSync(path.join(claudePath, 'skill.txt'))).toBe(true);
+  });
 });

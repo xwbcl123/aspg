@@ -3,7 +3,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createLink, isValidLink, removeLink, isStaleLink } from '../platform.js';
+import { createLink, getLinkMethod, isCopyInSync, isValidLink, removeLink, isStaleLink, removeCopyMarker, syncCopyFallback } from '../platform.js';
 import { SSOT_DIR, getBridgeVendors } from '../vendors.js';
 
 interface ApplyOptions {
@@ -24,6 +24,14 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
     return;
   }
 
+  if (removeCopyMarker(ssotPath, dryRun)) {
+    if (dryRun) {
+      console.log(`[dry-run] Would remove ${SSOT_DIR}/.aspg-copy-fallback (SSOT marker pollution)`);
+    } else {
+      console.log(`↻ Removed ${SSOT_DIR}/.aspg-copy-fallback (SSOT marker pollution)`);
+    }
+  }
+
   // Scan skills
   const skills = fs.readdirSync(ssotPath, { withFileTypes: true })
     .filter((d) => d.isDirectory())
@@ -34,6 +42,28 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
   // Refresh bridge vendor links only
   for (const [vendor, linkDir] of Object.entries(getBridgeVendors())) {
     const linkPath = path.join(root, linkDir);
+    const method = getLinkMethod(linkPath);
+
+    if (method === 'copy' && isCopyInSync(linkPath, ssotPath)) {
+      console.log(`· ${linkDir} — copy fallback, in sync (${vendor})`);
+      continue;
+    }
+
+    if (method === 'copy') {
+      if (dryRun) {
+        console.log(`[dry-run] Would refresh ${linkDir} from ${SSOT_DIR}/ [copy] (${vendor})`);
+      } else {
+        try {
+          syncCopyFallback(ssotPath, linkPath);
+          console.log(`↻ Refreshed ${linkDir} from ${SSOT_DIR}/ [copy] (${vendor})`);
+        } catch (err) {
+          console.error(`✗ Failed to refresh ${linkDir} (${vendor}): ${(err as Error).message}`);
+          process.exitCode = 2;
+          return;
+        }
+      }
+      continue;
+    }
 
     if (isValidLink(linkPath, ssotPath)) {
       console.log(`· ${linkDir} → valid (${vendor})`);
@@ -45,8 +75,14 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
       if (dryRun) {
         console.log(`[dry-run] Would remove stale ${linkDir}`);
       } else {
-        removeLink(linkPath);
-        console.log(`↻ Removed stale ${linkDir}`);
+        try {
+          removeLink(linkPath);
+          console.log(`↻ Removed stale ${linkDir}`);
+        } catch (err) {
+          console.error(`✗ Failed to remove stale ${linkDir} (${vendor}): ${(err as Error).message}`);
+          process.exitCode = 2;
+          return;
+        }
       }
     }
 

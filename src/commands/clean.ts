@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { removeLink, isStaleLink, isAspgManaged } from '../platform.js';
+import { removeLink, isStaleLink, isAspgManaged, removeCopyMarker } from '../platform.js';
 import { SSOT_DIR, VENDOR_REGISTRY } from '../vendors.js';
 
 interface CleanOptions {
@@ -19,6 +19,16 @@ export async function cleanCommand(opts: CleanOptions = {}): Promise<void> {
   if (dryRun) console.log('[dry-run] No changes will be made.\n');
 
   let removed = 0;
+  const ssotPath = path.join(root, SSOT_DIR);
+
+  if (removeCopyMarker(ssotPath, dryRun)) {
+    if (dryRun) {
+      console.log(`[dry-run] Would remove ${SSOT_DIR}/.aspg-copy-fallback (SSOT marker pollution)`);
+    } else {
+      console.log(`✓ Removed ${SSOT_DIR}/.aspg-copy-fallback (SSOT marker pollution)`);
+    }
+    removed++;
+  }
 
   // Iterate all vendors — native vendors may have legacy bridges to clean
   for (const [vendor, def] of Object.entries(VENDOR_REGISTRY)) {
@@ -56,7 +66,6 @@ export async function cleanCommand(opts: CleanOptions = {}): Promise<void> {
   console.log('💡 Gemini: Run manually → gemini skills unlink');
 
   // Confirm SSOT safety
-  const ssotPath = path.join(root, SSOT_DIR);
   if (fs.existsSync(ssotPath)) {
     console.log(`\n✓ ${SSOT_DIR}/ preserved (${fs.readdirSync(ssotPath).length} items)`);
   }
