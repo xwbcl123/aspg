@@ -15,6 +15,42 @@ When working with multiple AI tools, each typically requires its own folder for 
 - **Unified Metadata Standard**: Enforces a strict schema (Frontmatter) for skills using `SKILL.md` (metadata like name, description, requirements).
 - **Cross-Platform Vendor Bridges**: Automatically syncs skills from the SSOT to vendor-specific directories (supports symlinks, junctions, or physical copies with graceful degradation for Windows Developer Mode limitations).
 - **Bidirectional Flow**: Easily import existing skills from a specific vendor's ecosystem back into the unified SSOT, stripping vendor-specific configurations.
+- **Native vs Bridge Vendor Awareness**: Supports mixed topologies where some vendors read `.agents/skills/` directly while others still need a vendor-local bridge.
+- **Copy-Fallback Hygiene**: Detects polluted SSOT markers, refreshes stale copy-fallback bridges safely, and avoids propagating `.aspg-copy-fallback` into the source tree.
+- **Plugin Bundle Validation**: Recognizes Anthropic-style plugin bundles (for example `skill-creator`) instead of misclassifying them as broken nested packaging.
+
+### Recent Improvements
+
+- `aspg doctor` now separates true bridge drift from SSOT pollution caused by `.aspg-copy-fallback`.
+- `aspg apply` now refreshes stale copy-fallback bridges in place instead of treating them as always valid when the marker exists.
+- `aspg clean` now removes accidental SSOT copy-fallback markers without touching the SSOT directory itself.
+- `aspg lint` now supports plugin bundles and skips `*-workspace` directories under SSOT.
+
+### Recommended Workflow
+
+```bash
+# 1) Validate contracts
+aspg lint
+
+# 2) Refresh bridge vendors
+aspg apply
+
+# 3) Verify topology health
+aspg doctor
+```
+
+Expected outcomes:
+
+- `lint` passes for both regular skills and supported plugin bundles
+- `apply` keeps bridge vendors aligned with `.agents/skills/`
+- `doctor` reports `healthy` when SSOT and bridge topology are clean
+
+### SSOT Rules
+
+- Treat `.agents/skills/` as the only source of truth.
+- Do not keep `.aspg-copy-fallback` inside SSOT.
+- Keep runnable examples in SSOT docs vendor-agnostic where possible (for example `python scripts/...` from the skill root).
+- Reserve `.claude/skills/` and other bridge directories for generated bridge artifacts only.
 
 ### Installation
 
@@ -73,3 +109,36 @@ npx aspg <command>
 - `aspg compat [skill-name]` - 检查环境和依赖要求兼容性
 - `aspg doctor` - 检查桥接拓扑结构和软链接的健康状态
 - `aspg clean` - 清理所有由 ASPG 生成的桥接产物（保留 `.agents/skills/` 核心目录）
+
+### 最近优化
+
+- `aspg doctor` 现在可以区分真正的 bridge 漂移与 `.aspg-copy-fallback` 污染导致的误报。
+- `aspg apply` 现在可以原地刷新 stale copy-fallback bridge，而不是仅凭 marker 存在就误判为有效。
+- `aspg clean` 现在可以移除误落入 SSOT 的 copy-fallback marker，同时保留 SSOT 目录本身。
+- `aspg lint` 现在支持 Anthropic 风格 plugin bundle，并跳过 SSOT 下的 `*-workspace` 目录。
+
+### 推荐使用顺序
+
+```bash
+# 1) 校验技能契约
+aspg lint
+
+# 2) 刷新 bridge vendor
+aspg apply
+
+# 3) 检查拓扑健康状态
+aspg doctor
+```
+
+期望结果：
+
+- `lint` 同时通过普通 skill 与受支持的 plugin bundle
+- `apply` 让 bridge vendor 与 `.agents/skills/` 保持对齐
+- `doctor` 在 SSOT 与 bridge 都干净时返回 `healthy`
+
+### SSOT 规则
+
+- `.agents/skills/` 始终是唯一事实来源。
+- 不要把 `.aspg-copy-fallback` 留在 SSOT 内。
+- SSOT 文档中的可执行示例尽量写成 vendor-agnostic 形式（例如在 skill 根目录下执行 `python scripts/...`）。
+- `.claude/skills/` 这类目录只应承载生成出来的 bridge 产物，不应作为手工维护源目录。
