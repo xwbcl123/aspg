@@ -10,13 +10,14 @@ import { compatCommand } from './commands/compat.js';
 import { doctorCommand } from './commands/doctor.js';
 import { importCommand } from './commands/import.js';
 import { cleanCommand } from './commands/clean.js';
+import { profilePlanCommand } from './commands/profile.js';
 
 const program = new Command();
 
 program
   .name('aspg')
   .description('Agent Skills Protocol Guardian — multi-AI skill governance CLI')
-  .version('0.2.0');
+  .version('0.3.0');
 
 program
   .command('init')
@@ -36,8 +37,15 @@ program
 program
   .command('lint')
   .description('Validate all SKILL.md contracts')
-  .action(async () => {
-    await lintCommand();
+  .option('--max-description-chars <count>', 'Maximum parsed description length', '1024')
+  .action(async (opts) => {
+    const maxDescriptionChars = Number.parseInt(opts.maxDescriptionChars, 10);
+    if (!Number.isInteger(maxDescriptionChars) || maxDescriptionChars <= 0) {
+      console.error('✗ --max-description-chars must be a positive integer');
+      process.exitCode = 2;
+      return;
+    }
+    await lintCommand({ maxDescriptionChars });
   });
 
 program
@@ -81,6 +89,24 @@ program
   .option('--dry-run', 'Preview changes without making them')
   .action(async (opts) => {
     await cleanCommand({ dryRun: opts.dryRun });
+  });
+
+const profile = program
+  .command('profile')
+  .description('Plan Profile exposure without mutating project runtimes');
+
+profile
+  .command('plan <profile>')
+  .description('Resolve Core + Profile + runtime replacements (read-only)')
+  .requiredOption('--project <path>', 'Project root')
+  .requiredOption('--device <id>', 'Device identifier in the device registry')
+  .requiredOption('--runtime <name>', 'Runtime capability map')
+  .option('--manifest <path>', 'Manifest path (default: <project>/.aspg/manifest.yaml)')
+  .option('--lock <path>', 'Lock path (default: <project>/.aspg/lock.yaml)')
+  .option('--device-registry <path>', 'Machine-local device registry path')
+  .option('--json', 'Emit deterministic JSON')
+  .action(async (profileName, opts) => {
+    await profilePlanCommand(profileName, opts);
   });
 
 program.parse();

@@ -1,0 +1,18 @@
+version: 1
+devices:
+  macbook:
+    platform: darwin
+    source_roots:
+      shared: __SHARED_ROOT__
+      derivative: __DERIVATIVE_ROOT__
+    backends:
+      managed-link: symlink
+      managed-materialized: materialize
+  linux-server:
+    platform: linux
+    source_roots:
+      shared: __SHARED_ROOT__
+      derivative: __DERIVATIVE_ROOT__
+    backends:
+      managed-link: copy
+      managed-materialized: materialize

@@ -1,6 +1,6 @@
 {
   "name": "aspg",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Agent Skills Protocol Guardian — lightweight CLI for multi-AI skill governance",
   "type": "module",
   "bin": {

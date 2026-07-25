@@ -1,0 +1,86 @@
+version: 1
+project: mixed-mode-fixture
+command_maturity:
+  profile_plan: mvp
+  profile_apply: future
+concurrency:
+  mode: stable-core-catalog-on-demand
+  hot_switch_shared_runtime: false
+  activation_lock: .aspg/profile-activation.lock
+core:
+  - local-core
+sources:
+  project:
+    kind: project-local
+    path: .
+    privacy: private
+  shared:
+    kind: git
+    repository: https://example.invalid/shared-skills.git
+    revision: shared-base
+    privacy: third-party
+  derivative:
+    kind: git
+    repository: ssh://example.invalid/private-skills.git
+    revision: derivative-base
+    privacy: private
+    upstream:
+      repository: https://example.invalid/upstream-skills.git
+      revision: upstream-base
+      path: skills/grill-me
+  native:
+    kind: runtime-native
+skills:
+  local-core:
+    source: project
+    path: .agents/skills/local-core
+    ownership: project-local
+    description_chars: 100
+    capabilities: [core]
+  shared-research:
+    source: shared
+    path: skills/shared-research
+    ownership: managed-link
+    description_chars: 120
+    capabilities: [research]
+  grill-me:
+    source: derivative
+    path: skills/grill-me
+    ownership: managed-materialized
+    description_chars: 140
+    capabilities: [interview]
+  lavish-design:
+    source: shared
+    path: skills/lavish-design
+    ownership: catalog-only
+    description_chars: 80
+    capabilities: [visual-design]
+  slides-helper:
+    source: shared
+    path: skills/slides-helper
+    ownership: managed-materialized
+    description_chars: 90
+    capabilities: [slides]
+  native-search:
+    source: native
+    path: .
+    ownership: runtime-native
+    description_chars: 0
+    capabilities: [search]
+profiles:
+  work-delivery:
+    include:
+      - shared-research
+      - grill-me
+      - lavish-design
+      - slides-helper
+      - native-search
+    exclude: []
+    budgets:
+      max_skills: 4
+      max_description_chars: 500
+runtimes:
+  codex:
+    replacements:
+      slides: presentations-plugin
+      search: browser-plugin

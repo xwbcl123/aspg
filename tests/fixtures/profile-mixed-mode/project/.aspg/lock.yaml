@@ -1,0 +1,13 @@
+version: 1
+sources:
+  shared:
+    revision: shared-base
+    tree_hash: __SHARED_TREE_HASH__
+  derivative:
+    revision: derivative-base
+    tree_hash: __DERIVATIVE_TREE_HASH__
+managed:
+  old-managed:
+    target: .agents/skills/old-managed
+    ownership: managed-materialized
+    tree_hash: sha256:old-managed

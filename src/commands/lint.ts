@@ -12,7 +12,18 @@ interface SkillValidationResult {
   hadScriptsDir: boolean;
 }
 
-export async function lintCommand(): Promise<void> {
+export interface LintOptions {
+  maxDescriptionChars?: number;
+}
+
+interface DescriptionSourceInfo {
+  kind: 'inline' | 'block' | 'missing';
+  sourceChars: number | null;
+  unsafeMarker: string | null;
+}
+
+export async function lintCommand(opts: LintOptions = {}): Promise<void> {
+  const { maxDescriptionChars = 1024 } = opts;
   const root = process.cwd();
   const ssotPath = path.join(root, SSOT_DIR);
 
@@ -61,7 +72,11 @@ export async function lintCommand(): Promise<void> {
 
         console.log(`  · plugin bundle detected (${nestedSkills.length} nested skill(s))`);
         for (const nestedSkill of nestedSkills) {
-          const nestedResult = validateSkillContract(path.join(nestedSkillsDir, nestedSkill), `  [plugin:${nestedSkill}] `);
+          const nestedResult = validateSkillContract(
+            path.join(nestedSkillsDir, nestedSkill),
+            `  [plugin:${nestedSkill}] `,
+            maxDescriptionChars,
+          );
           if (!nestedResult.ok) hasErrors = true;
         }
         continue;
@@ -85,7 +100,7 @@ export async function lintCommand(): Promise<void> {
       continue;
     }
 
-    const result = validateSkillContract(skillDir, '  ');
+    const result = validateSkillContract(skillDir, '  ', maxDescriptionChars);
     if (!result.ok) hasErrors = true;
   }
 
@@ -97,7 +112,11 @@ export async function lintCommand(): Promise<void> {
   }
 }
 
-function validateSkillContract(skillDir: string, prefix: string): SkillValidationResult {
+function validateSkillContract(
+  skillDir: string,
+  prefix: string,
+  maxDescriptionChars: number,
+): SkillValidationResult {
   const skillMd = path.join(skillDir, 'SKILL.md');
 
   // Parse frontmatter
@@ -106,6 +125,15 @@ function validateSkillContract(skillDir: string, prefix: string): SkillValidatio
 
   if (!frontmatter) {
     console.error(`${prefix}✗ No YAML frontmatter found`);
+    return { ok: false, hadScriptsDir: false };
+  }
+
+  const descriptionSource = inspectDescriptionSource(frontmatter);
+  if (descriptionSource.unsafeMarker) {
+    console.error(
+      `${prefix}✗ description contains unquoted marker ${descriptionSource.unsafeMarker}; `
+      + 'quote the scalar or use | / > block style',
+    );
     return { ok: false, hadScriptsDir: false };
   }
 
@@ -133,24 +161,47 @@ function validateSkillContract(skillDir: string, prefix: string): SkillValidatio
   }
 
   console.log(`${prefix}✓ Frontmatter valid`);
+  const parsedDescriptionChars = result.data.description.length;
+  const sourceLength = descriptionSource.sourceChars === null
+    ? descriptionSource.kind
+    : String(descriptionSource.sourceChars);
+  console.log(
+    `${prefix}· description chars: parsed=${parsedDescriptionChars}, source=${sourceLength}, `
+    + `budget=${maxDescriptionChars}`,
+  );
+  if (parsedDescriptionChars > maxDescriptionChars) {
+    console.error(
+      `${prefix}✗ description exceeds budget: ${parsedDescriptionChars} > ${maxDescriptionChars}`,
+    );
+    return { ok: false, hadScriptsDir: false };
+  }
 
   // Check scripts/ directory
   const scriptsDir = path.join(skillDir, 'scripts');
   if (fs.existsSync(scriptsDir)) {
-    const scripts = fs.readdirSync(scriptsDir);
+    const scripts = fs.readdirSync(scriptsDir, { withFileTypes: true });
     if (scripts.length === 0) {
       console.log(`${prefix}· scripts/ is empty`);
     } else {
-      // On Unix, check executable permission
+      // Directory trees and interpreter-invoked files are portable without an
+      // executable mode bit. A missing bit on a shebang file is diagnostic,
+      // not a contract failure (cloud-sync and Windows may not preserve it).
       if (process.platform !== 'win32') {
         for (const script of scripts) {
-          const scriptPath = path.join(scriptsDir, script);
+          if (!script.isFile()) continue;
+          const scriptPath = path.join(scriptsDir, script.name);
+          const hasShebang = fs.readFileSync(scriptPath, 'utf-8').startsWith('#!');
+          if (!hasShebang) {
+            console.log(`${prefix}· scripts/${script.name} (interpreter-invoked)`);
+            continue;
+          }
           try {
             fs.accessSync(scriptPath, fs.constants.X_OK);
-            console.log(`${prefix}✓ scripts/${script} (executable)`);
+            console.log(`${prefix}✓ scripts/${script.name} (executable)`);
           } catch {
-            console.error(`${prefix}✗ scripts/${script} not executable`);
-            return { ok: false, hadScriptsDir: true };
+            console.warn(
+              `${prefix}⚠ scripts/${script.name} has a shebang but is not executable`,
+            );
           }
         }
       } else {
@@ -165,4 +216,46 @@ function validateSkillContract(skillDir: string, prefix: string): SkillValidatio
 function extractFrontmatter(content: string): string | null {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   return match ? match[1] : null;
+}
+
+/**
+ * Detect YAML plain-scalar markers that would be silently parsed as comments.
+ * Example: `description: route #publish requests` loses `#publish requests`.
+ */
+export function inspectDescriptionSource(frontmatter: string): DescriptionSourceInfo {
+  const lines = frontmatter.split(/\r?\n/);
+  const lineIndex = lines.findIndex((candidate) => /^\s*description\s*:/.test(candidate));
+  const line = lines[lineIndex];
+
+  if (!line) {
+    return { kind: 'missing', sourceChars: null, unsafeMarker: null };
+  }
+
+  const raw = line.replace(/^\s*description\s*:\s*/, '');
+  const trimmed = raw.trim();
+  if (trimmed === '|' || trimmed === '>' || trimmed.startsWith('|') || trimmed.startsWith('>')) {
+    const baseIndent = line.match(/^\s*/)?.[0].length ?? 0;
+    const blockLines: string[] = [];
+    for (const candidate of lines.slice(lineIndex + 1)) {
+      const indent = candidate.match(/^\s*/)?.[0].length ?? 0;
+      if (candidate.trim() !== '' && indent <= baseIndent) break;
+      blockLines.push(candidate);
+    }
+    return {
+      kind: 'block',
+      sourceChars: blockLines.join('\n').length,
+      unsafeMarker: null,
+    };
+  }
+
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    return { kind: 'inline', sourceChars: trimmed.length, unsafeMarker: null };
+  }
+
+  const marker = trimmed.match(/(?:^|\s)(#[\p{L}\p{N}_-]+)/u)?.[1] ?? null;
+  return {
+    kind: 'inline',
+    sourceChars: trimmed.length,
+    unsafeMarker: marker,
+  };
 }

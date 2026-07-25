@@ -18,9 +18,13 @@ When working with multiple AI tools, each typically requires its own folder for 
 - **Native vs Bridge Vendor Awareness**: Supports mixed topologies where some vendors read `.agents/skills/` directly while others still need a vendor-local bridge.
 - **Copy-Fallback Hygiene**: Detects polluted SSOT markers, refreshes stale copy-fallback bridges safely, and avoids propagating `.aspg-copy-fallback` into the source tree.
 - **Plugin Bundle Validation**: Recognizes Anthropic-style plugin bundles (for example `skill-creator`) instead of misclassifying them as broken nested packaging.
+- **Read-Only Profile Planning (Foundation)**: Composes stable Core + Profile + device backend + runtime replacements without mutating project runtimes.
+- **Description Safety Lint**: Detects unquoted YAML trigger markers such as `#publish` that would otherwise be silently truncated.
 
 ### Recent Improvements
 
+- `aspg profile plan` adds deterministic, read-only mixed-mode planning with portable manifests/locks and machine-local device registries.
+- `aspg lint` now rejects unquoted YAML trigger markers and reports description budgets.
 - `aspg doctor` now separates true bridge drift from SSOT pollution caused by `.aspg-copy-fallback`.
 - `aspg apply` now refreshes stale copy-fallback bridges in place instead of treating them as always valid when the marker exists.
 - `aspg clean` now removes accidental SSOT copy-fallback markers without touching the SSOT directory itself.
@@ -73,6 +77,11 @@ npx aspg <command>
 - `aspg compat [skill-name]` - Check environment & dependency requirements
 - `aspg doctor` - Topology & link health check
 - `aspg clean` - Remove all ASPG-generated bridges (preserves the `.agents/skills/` SSOT)
+- `aspg profile plan <profile> --project <path> --device <id> --runtime <runtime> --json` - Deterministic, read-only Profile plan
+
+Profile planning uses a portable manifest/lock plus a machine-local device
+registry. `profile apply` is intentionally not part of the Foundation MVP. See
+[`docs/foundation-profile-contract.md`](docs/foundation-profile-contract.md).
 
 ---
 
