@@ -4,4 +4,3 @@ sources:
     source_type: project-local
   - id: shared-source
     source_type: git
-
