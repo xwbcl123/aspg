@@ -19,6 +19,9 @@ When working with multiple AI tools, each typically requires its own folder for 
 - **Copy-Fallback Hygiene**: Detects polluted SSOT markers, refreshes stale copy-fallback bridges safely, and avoids propagating `.aspg-copy-fallback` into the source tree.
 - **Plugin Bundle Validation**: Recognizes Anthropic-style plugin bundles (for example `skill-creator`) instead of misclassifying them as broken nested packaging.
 - **Read-Only Profile Planning (Foundation)**: Composes stable Core + Profile + device backend + runtime replacements without mutating project runtimes.
+- **Federated Lifecycle Inspection**: Validates and aggregates owner-adjacent
+  learning, adoption, lineage, freshness and evidence records without changing
+  them or inferring deployment state.
 - **Description Safety Lint**: Detects unquoted YAML trigger markers such as `#publish` that would otherwise be silently truncated.
 
 ### Recent Improvements
@@ -78,10 +81,20 @@ npx aspg <command>
 - `aspg doctor` - Topology & link health check
 - `aspg clean` - Remove all ASPG-generated bridges (preserves the `.agents/skills/` SSOT)
 - `aspg profile plan <profile> --project <path> --device <id> --runtime <runtime> --json` - Deterministic, read-only Profile plan
+- `aspg lifecycle validate --registry <path...> [--lifeos-root <41.15-root>] [--json]` - Validate lifecycle schemas, resolved evidence, sources, lineage, privacy and duplicate IDs
+- `aspg lifecycle list --registry <path...> [--lifeos-root <41.15-root>] [--json]` - List a deterministic federated catalog
+- `aspg lifecycle show <skill-id> --registry <path...> [--lifeos-root <41.15-root>] [--json]` - Show one lifecycle dossier
+- `aspg lifecycle status --registry <path...> [--lifeos-root <41.15-root>] [--as-of YYYY-MM-DD] [--json]` - Summarize maturity, scoped adoption and freshness
+- `aspg lifecycle next --registry <path...> [--lifeos-root <41.15-root>] [--as-of YYYY-MM-DD] [--json]` - Recommend evidence-backed next actions
 
 Profile planning uses a portable manifest/lock plus a machine-local device
 registry. `profile apply` is intentionally not part of the Foundation MVP. See
 [`docs/foundation-profile-contract.md`](docs/foundation-profile-contract.md).
+Lifecycle inspection is a separate read-only namespace. Its Git-portable
+contract is documented in
+[`docs/lifecycle-registry-contract.md`](docs/lifecycle-registry-contract.md).
+Run `npm run schema:lifecycle` after `npm run build` to print the deterministic
+machine-readable schema generated from ASPG's canonical Zod contract.
 
 ---
 
@@ -96,6 +109,7 @@ registry. `profile apply` is intentionally not part of the Foundation MVP. See
 - **统一的元数据标准**：通过 `SKILL.md` 强制要求严格的 Frontmatter 契约（包含技能名称、描述、环境要求等）。
 - **跨平台生态桥接**：自动将 SSOT 中的技能同步到特定厂商的目录中（支持软链接、Junction 或物理复制，并针对 Windows 开发者模式限制做了优雅降级容错）。
 - **双向流转**：可以轻松地将某个特定厂商生态内的现有技能导入回统一的 SSOT 中，并自动剔除厂商专属的配置字段。
+- **联邦式生命周期审视（Federated Lifecycle Inspection）**：聚合由各来源仓库维护的学习、采用、血缘、时效性和证据记录；只读且不推断安装状态。
 
 ### 安装
 
@@ -118,6 +132,7 @@ npx aspg <command>
 - `aspg compat [skill-name]` - 检查环境和依赖要求兼容性
 - `aspg doctor` - 检查桥接拓扑结构和软链接的健康状态
 - `aspg clean` - 清理所有由 ASPG 生成的桥接产物（保留 `.agents/skills/` 核心目录）
+- `aspg lifecycle validate|list|show|status|next --registry <path...> [--json]` - 只读校验、聚合和建议 Skill 生命周期记录
 
 ### 最近优化
 

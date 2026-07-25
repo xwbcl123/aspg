@@ -1,0 +1,42 @@
+schema_version: 1
+skill_id: mattpocock/grill-with-docs
+display_name: Grill With Docs
+source_ref: shared-source
+owner_class: third-party
+learning:
+  current_level: L3
+  target_level: L4
+  evidence:
+    - kind: reproduction
+      ref: evidence/grill-reproduction.md
+      reviewed_at: 2026-07-25
+    - kind: architecture-review
+      ref: lifeos://41.15/skills/mattpocock-grill-with-docs
+      reviewed_at: 2026-07-25
+    - kind: adaptation
+      ref: lifeos://41.15/experiments/grill-localization
+      reviewed_at: 2026-07-25
+    - kind: validation
+      ref: evidence/grill-validation.md
+      reviewed_at: 2026-07-25
+adoption:
+  scopes:
+    - project: work-pkm
+      stage: pilot
+      devices: [macbook-pro, linux-server]
+      workflows: [requirements-clarification]
+      evidence:
+        - kind: source-review
+          ref: evidence/grill-source-review.md
+          reviewed_at: 2026-07-25
+        - kind: reproduction
+          ref: evidence/grill-reproduction.md
+          reviewed_at: 2026-07-25
+disposition:
+  relations:
+    - type: reference
+freshness:
+  status: current
+  reviewed_at: 2026-07-25
+  triggers: [upstream-change, model-major-upgrade]
+next_review_at: 2026-08-25

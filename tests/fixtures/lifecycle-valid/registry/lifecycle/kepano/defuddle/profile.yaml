@@ -1,0 +1,27 @@
+schema_version: 1
+skill_id: kepano/defuddle
+display_name: Defuddle
+source_ref: shared-source
+owner_class: third-party
+learning:
+  current_level: L1
+  target_level: L2
+  evidence:
+    - kind: reproduction
+      ref: evidence/defuddle-reproduction.md
+      reviewed_at: 2026-07-25
+adoption:
+  scopes:
+    - project: life-os
+      stage: sandbox
+      devices: [mac-mini]
+      workflows: []
+      evidence: []
+disposition:
+  relations:
+    - type: use-as-is
+freshness:
+  status: current
+  reviewed_at: 2026-07-25
+  triggers: [upstream-change, model-major-upgrade]
+next_review_at: 2026-08-25

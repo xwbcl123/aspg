@@ -11,6 +11,13 @@ import { doctorCommand } from './commands/doctor.js';
 import { importCommand } from './commands/import.js';
 import { cleanCommand } from './commands/clean.js';
 import { profilePlanCommand } from './commands/profile.js';
+import {
+  lifecycleListCommand,
+  lifecycleNextCommand,
+  lifecycleShowCommand,
+  lifecycleStatusCommand,
+  lifecycleValidateCommand,
+} from './commands/lifecycle.js';
 
 const program = new Command();
 
@@ -107,6 +114,59 @@ profile
   .option('--json', 'Emit deterministic JSON')
   .action(async (profileName, opts) => {
     await profilePlanCommand(profileName, opts);
+  });
+
+const lifecycle = program
+  .command('lifecycle')
+  .description('Inspect federated Skill lifecycle records without mutating them');
+
+function lifecycleReadCommand(name: string, description: string): Command {
+  return lifecycle
+    .command(name)
+    .description(description)
+    .requiredOption('--registry <path...>', 'One or more lifecycle registry owner roots')
+    .option('--lifeos-root <path>', 'Device-local 41.15 Knowledge Library entity root')
+    .option('--json', 'Emit deterministic JSON');
+}
+
+lifecycleReadCommand('validate', 'Validate lifecycle schemas, references, paths and privacy')
+  .action(async (opts) => {
+    await lifecycleValidateCommand(opts);
+  });
+
+lifecycleReadCommand('list', 'List a deterministic lifecycle catalog view')
+  .action(async (opts) => {
+    await lifecycleListCommand(opts);
+  });
+
+lifecycle
+  .command('show <skill-id>')
+  .description('Show one lifecycle dossier')
+  .requiredOption('--registry <path...>', 'One or more lifecycle registry owner roots')
+  .option('--lifeos-root <path>', 'Device-local 41.15 Knowledge Library entity root')
+  .option('--json', 'Emit deterministic JSON')
+  .action(async (skillId, opts) => {
+    await lifecycleShowCommand(skillId, opts);
+  });
+
+const lifecycleStatus = lifecycleReadCommand(
+  'status',
+  'Summarize lifecycle maturity, adoption and freshness',
+).option('--as-of <YYYY-MM-DD>', 'Effective date surfaced in deterministic output');
+
+lifecycleStatus
+  .action(async (opts) => {
+    await lifecycleStatusCommand(opts);
+  });
+
+const lifecycleNext = lifecycleReadCommand(
+  'next',
+  'Recommend deterministic evidence-backed next actions',
+).option('--as-of <YYYY-MM-DD>', 'Effective date for deterministic recommendations');
+
+lifecycleNext
+  .action(async (opts) => {
+    await lifecycleNextCommand(opts);
   });
 
 program.parse();

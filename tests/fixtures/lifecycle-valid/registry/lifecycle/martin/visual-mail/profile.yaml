@@ -1,0 +1,60 @@
+schema_version: 1
+skill_id: martin/visual-mail
+display_name: Visual Mail
+source_ref: project-source
+owner_class: project-local
+learning:
+  current_level: L4
+  target_level: L4
+  evidence:
+    - kind: reproduction
+      ref: evidence/visual-mail.md
+      reviewed_at: 2026-07-25
+    - kind: architecture-review
+      ref: evidence/visual-mail.md
+      reviewed_at: 2026-07-25
+    - kind: adaptation
+      ref: evidence/visual-mail.md
+      reviewed_at: 2026-07-25
+    - kind: validation
+      ref: evidence/visual-mail.md
+      reviewed_at: 2026-07-25
+    - kind: production-case
+      ref: evidence/visual-mail.md
+      reviewed_at: 2026-07-25
+    - kind: human-review
+      ref: evidence/visual-mail.md
+      reviewed_at: 2026-07-25
+    - kind: fallback
+      ref: evidence/visual-mail.md
+      reviewed_at: 2026-07-25
+adoption:
+  scopes:
+    - project: work-pkm
+      stage: production
+      devices: [macbook-pro, linux-server]
+      workflows: [visual-email-production]
+      evidence:
+        - kind: production-case
+          ref: evidence/visual-mail.md
+          reviewed_at: 2026-07-25
+        - kind: human-review
+          ref: evidence/visual-mail.md
+          reviewed_at: 2026-07-25
+        - kind: fallback
+          ref: evidence/visual-mail.md
+          reviewed_at: 2026-07-25
+    - project: life-os
+      stage: none
+      devices: [mac-mini]
+      workflows: []
+      evidence: []
+disposition:
+  relations:
+    - type: compose
+      target: workflow/visual-email-production
+freshness:
+  status: needs-revalidation
+  reviewed_at: 2026-07-25
+  triggers: [model-major-upgrade]
+next_review_at: 2026-08-25
