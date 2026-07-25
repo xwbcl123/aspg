@@ -94,4 +94,3 @@ export function generateLifecycleProfileJsonSchema(): JsonSchema {
     ...jsonSchemaFromZod(LifecycleProfileSchema),
   };
 }
-
