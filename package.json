@@ -11,7 +11,8 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "schema:lifecycle": "node dist/print-lifecycle-schema.js"
   },
   "keywords": ["ai", "cli", "skills", "protocol", "guardian"],
   "author": "Martin",

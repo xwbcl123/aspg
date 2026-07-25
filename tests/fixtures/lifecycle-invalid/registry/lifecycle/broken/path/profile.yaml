@@ -1,0 +1,26 @@
+schema_version: 1
+skill_id: broken/path
+display_name: Broken Path
+source_ref: missing-source
+owner_class: third-party
+learning:
+  current_level: L1
+  target_level: L1
+  evidence:
+    - kind: reproduction
+      ref: ../../outside.md
+      reviewed_at: 2026-07-25
+      summary: "Contact person@example.com with token=not-redacted"
+adoption:
+  scopes:
+    - project: invalid
+      stage: none
+      devices: []
+      workflows: []
+      evidence: []
+disposition:
+  relations: []
+freshness:
+  status: current
+  reviewed_at: 2026-07-25
+  triggers: []

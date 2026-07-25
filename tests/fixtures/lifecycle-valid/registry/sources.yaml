@@ -1,0 +1,7 @@
+schema_version: 1
+sources:
+  - id: project-source
+    source_type: project-local
+  - id: shared-source
+    source_type: git
+
