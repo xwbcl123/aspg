@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createLink } from '../src/platform.js';
+import { createLink, isValidLink } from '../src/platform.js';
 
 let tmpDir: string;
 let origCwd: string;
@@ -18,10 +18,13 @@ beforeEach(() => {
 afterEach(() => {
   process.chdir(origCwd);
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  process.exitCode = undefined;
   vi.restoreAllMocks();
 });
 
-async function runApply(dryRun = false): Promise<{ stdout: string; stderr: string }> {
+async function runApply(
+  dryRun = false,
+): Promise<{ stdout: string; stderr: string; exitCode: number | undefined }> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const origLog = console.log;
@@ -32,13 +35,19 @@ async function runApply(dryRun = false): Promise<{ stdout: string; stderr: strin
   console.warn = (...args: unknown[]) => stderr.push(args.join(' '));
   process.exitCode = undefined as unknown as number;
 
-  const { applyCommand } = await import('../src/commands/apply.js');
-  await applyCommand({ dryRun });
-
-  console.log = origLog;
-  console.error = origError;
-  console.warn = origWarn;
-  return { stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  try {
+    const { applyCommand } = await import('../src/commands/apply.js');
+    await applyCommand({ dryRun });
+    return {
+      stdout: stdout.join('\n'),
+      stderr: stderr.join('\n'),
+      exitCode: process.exitCode,
+    };
+  } finally {
+    console.log = origLog;
+    console.error = origError;
+    console.warn = origWarn;
+  }
 }
 
 describe('apply — native vendor regression guard', () => {
@@ -71,16 +80,31 @@ describe('apply — native vendor regression guard', () => {
     expect(fs.existsSync(claudePath)).toBe(true);
   });
 
-  it('should refresh stale bridge for bridge vendor', async () => {
-    // Create claude bridge, then remove it
+  it('should refuse an orphan marker left by an interrupted bridge removal', async () => {
     const ssotPath = path.join(tmpDir, '.agents', 'skills');
     const claudePath = path.join(tmpDir, '.claude', 'skills');
     await createLink(ssotPath, claudePath);
     fs.rmSync(claudePath, { recursive: true, force: true });
 
-    const { stdout } = await runApply();
-    expect(stdout).toContain('claude');
-    expect(fs.existsSync(claudePath)).toBe(true);
+    const { stderr, exitCode } = await runApply();
+    expect(stderr).toContain('ASPG_LINK_ORPHAN_MARKER');
+    expect(exitCode).toBe(2);
+    expect(fs.existsSync(claudePath)).toBe(false);
+  });
+
+  it('atomically refreshes a broken ASPG-managed bridge', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const staleTarget = path.join(tmpDir, 'removed-skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(staleTarget);
+    await createLink(staleTarget, claudePath);
+    fs.rmdirSync(staleTarget);
+
+    const { stdout, stderr, exitCode } = await runApply();
+    expect(stderr).toBe('');
+    expect(exitCode).toBeUndefined();
+    expect(stdout).toContain('Created .claude/skills');
+    expect(isValidLink(claudePath, ssotPath)).toBe(true);
   });
 
   it('should not touch surviving legacy bridge for native vendor', async () => {
@@ -124,15 +148,87 @@ describe('apply — native vendor regression guard', () => {
     expect(fs.existsSync(path.join(tmpDir, '.claude', 'skills'))).toBe(true);
   });
 
-  it('should refresh stale copy-fallback bridge for claude', async () => {
+  it('should quarantine a copy-fallback bridge on darwin/linux', async () => {
     const ssotPath = path.join(tmpDir, '.agents', 'skills');
     const claudePath = path.join(tmpDir, '.claude', 'skills');
     fs.mkdirSync(claudePath, { recursive: true });
     fs.writeFileSync(path.join(ssotPath, 'skill.txt'), 'fresh');
     fs.writeFileSync(path.join(claudePath, '.aspg-copy-fallback'), ssotPath, 'utf-8');
 
-    const { stdout } = await runApply();
-    expect(stdout).toContain('Refreshed .claude/skills from .agents/skills/ [copy]');
-    expect(fs.existsSync(path.join(claudePath, 'skill.txt'))).toBe(true);
+    const { stderr, exitCode } = await runApply();
+    expect(stderr).toContain('ASPG_LINK_COPY_UNSUPPORTED');
+    expect(exitCode).toBe(2);
+    expect(fs.existsSync(path.join(claudePath, 'skill.txt'))).toBe(false);
+  });
+
+  it('refuses an unmanaged real bridge directory without merging into it', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.writeFileSync(path.join(ssotPath, 'canonical.txt'), 'canonical');
+    fs.mkdirSync(claudePath, { recursive: true });
+    fs.writeFileSync(path.join(claudePath, 'local.txt'), 'preserve');
+
+    const { stderr, exitCode } = await runApply();
+    expect(stderr).toContain('ASPG_LINK_DESTINATION_REAL_DIRECTORY');
+    expect(exitCode).toBe(2);
+    expect(fs.readFileSync(path.join(claudePath, 'local.txt'), 'utf-8')).toBe('preserve');
+    expect(fs.existsSync(path.join(claudePath, 'canonical.txt'))).toBe(false);
+  });
+
+  it('refuses a file at the bridge destination', async () => {
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(path.dirname(claudePath), { recursive: true });
+    fs.writeFileSync(claudePath, 'preserve');
+
+    const { stderr, exitCode } = await runApply();
+    expect(stderr).toContain('ASPG_LINK_DESTINATION_FILE');
+    expect(exitCode).toBe(2);
+    expect(fs.readFileSync(claudePath, 'utf-8')).toBe('preserve');
+  });
+
+  it('refuses a foreign bridge link and preserves its target', async () => {
+    const foreignTarget = path.join(tmpDir, 'foreign-skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(foreignTarget);
+    fs.writeFileSync(path.join(foreignTarget, 'foreign.txt'), 'preserve');
+    fs.mkdirSync(path.dirname(claudePath), { recursive: true });
+    fs.symlinkSync(foreignTarget, claudePath, 'dir');
+
+    const { stderr, exitCode } = await runApply();
+    expect(stderr).toContain('ASPG_LINK_DESTINATION_FOREIGN_LINK');
+    expect(exitCode).toBe(2);
+    expect(fs.readlinkSync(claudePath)).toBe(foreignTarget);
+    expect(fs.readFileSync(path.join(foreignTarget, 'foreign.txt'), 'utf-8')).toBe('preserve');
+  });
+
+  it('preflights all bridges before removing SSOT marker pollution', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    const marker = path.join(ssotPath, '.aspg-copy-fallback');
+    fs.writeFileSync(marker, 'pollution');
+    fs.mkdirSync(claudePath, { recursive: true });
+    fs.writeFileSync(path.join(claudePath, 'local.txt'), 'preserve');
+
+    const { stderr, exitCode } = await runApply();
+    expect(stderr).toContain('ASPG_LINK_DESTINATION_REAL_DIRECTORY');
+    expect(exitCode).toBe(2);
+    expect(fs.readFileSync(marker, 'utf-8')).toBe('pollution');
+    expect(fs.readFileSync(path.join(claudePath, 'local.txt'), 'utf-8')).toBe('preserve');
+  });
+
+  it('counts and bridges a symlinked Skill directory in the SSOT', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const canonicalSkill = path.join(tmpDir, 'canonical-skill');
+    fs.mkdirSync(canonicalSkill);
+    fs.writeFileSync(path.join(canonicalSkill, 'SKILL.md'), '# linked skill');
+    fs.symlinkSync(canonicalSkill, path.join(ssotPath, 'linked-skill'), 'dir');
+
+    const { stdout, stderr, exitCode } = await runApply();
+    expect(stderr).toBe('');
+    expect(exitCode).toBeUndefined();
+    expect(stdout).toContain('Found 1 skill(s) in SSOT: linked-skill');
+    expect(
+      fs.readFileSync(path.join(tmpDir, '.claude', 'skills', 'linked-skill', 'SKILL.md'), 'utf-8'),
+    ).toBe('# linked skill');
   });
 });

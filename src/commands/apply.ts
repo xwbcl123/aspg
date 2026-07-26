@@ -3,7 +3,16 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createLink, getLinkMethod, isCopyInSync, isValidLink, removeLink, isStaleLink, removeCopyMarker, syncCopyFallback } from '../platform.js';
+import {
+  createLink,
+  getLinkMethod,
+  isAspgManaged,
+  isCopyInSync,
+  isValidLink,
+  listLinkedDirectories,
+  removeCopyMarker,
+  syncCopyFallback,
+} from '../platform.js';
 import { SSOT_DIR, getBridgeVendors } from '../vendors.js';
 
 interface ApplyOptions {
@@ -24,6 +33,24 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
     return;
   }
 
+  // Preflight every bridge before the first mutation. This ensures an
+  // unmanaged target causes one stable failure with no partial refresh.
+  for (const [vendor, linkDir] of Object.entries(getBridgeVendors())) {
+    const linkPath = path.join(root, linkDir);
+    const method = getLinkMethod(linkPath);
+    try {
+      if (method === 'copy') {
+        syncCopyFallback(ssotPath, linkPath, true);
+      } else if (!(isAspgManaged(linkPath) && isValidLink(linkPath, ssotPath))) {
+        await createLink(ssotPath, linkPath, { dryRun: true });
+      }
+    } catch (err) {
+      console.error(`✗ Refusing to refresh ${linkDir} (${vendor}): ${(err as Error).message}`);
+      process.exitCode = 2;
+      return;
+    }
+  }
+
   if (removeCopyMarker(ssotPath, dryRun)) {
     if (dryRun) {
       console.log(`[dry-run] Would remove ${SSOT_DIR}/.aspg-copy-fallback (SSOT marker pollution)`);
@@ -33,9 +60,7 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
   }
 
   // Scan skills
-  const skills = fs.readdirSync(ssotPath, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name);
+  const skills = listLinkedDirectories(ssotPath);
 
   console.log(`Found ${skills.length} skill(s) in SSOT: ${skills.join(', ') || '(none)'}`);
 
@@ -65,30 +90,15 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
       continue;
     }
 
-    if (isValidLink(linkPath, ssotPath)) {
+    if (isAspgManaged(linkPath) && isValidLink(linkPath, ssotPath)) {
       console.log(`· ${linkDir} → valid (${vendor})`);
       continue;
     }
 
-    // Remove stale link if exists
-    if (fs.existsSync(linkPath) || isStaleLink(linkPath)) {
-      if (dryRun) {
-        console.log(`[dry-run] Would remove stale ${linkDir}`);
-      } else {
-        try {
-          removeLink(linkPath);
-          console.log(`↻ Removed stale ${linkDir}`);
-        } catch (err) {
-          console.error(`✗ Failed to remove stale ${linkDir} (${vendor}): ${(err as Error).message}`);
-          process.exitCode = 2;
-          return;
-        }
-      }
-    }
-
-    // Create fresh link
+    // createLink performs fail-closed preflight and atomically replaces only a
+    // sidecar-recorded ASPG link. Foreign/broken/unmanaged entries are refused.
     if (dryRun) {
-      console.log(`[dry-run] Would create ${linkDir} → ${SSOT_DIR}/`);
+      console.log(`[dry-run] Would create or replace managed ${linkDir} → ${SSOT_DIR}/`);
     } else {
       try {
         const result = await createLink(ssotPath, linkPath);

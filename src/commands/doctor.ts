@@ -4,7 +4,16 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { COPY_MARKER, getLinkMethod, isValidLink, isCopyInSync, isStaleLink, hasCopyMarker } from '../platform.js';
+import {
+  COPY_MARKER,
+  getLinkMethod,
+  hasCopyMarker,
+  isAspgManaged,
+  isCopyInSync,
+  isStaleLink,
+  isValidLink,
+  listLinkedDirectories,
+} from '../platform.js';
 import { SSOT_DIR, VENDOR_REGISTRY } from '../vendors.js';
 
 export async function doctorCommand(): Promise<void> {
@@ -20,9 +29,7 @@ export async function doctorCommand(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const skills = fs.readdirSync(ssotPath, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name);
+  const skills = listLinkedDirectories(ssotPath);
   console.log(`✓ ${SSOT_DIR}/ exists (${skills.length} skill(s))`);
 
   const ssotMarkerPath = path.join(ssotPath, COPY_MARKER);
@@ -42,11 +49,11 @@ export async function doctorCommand(): Promise<void> {
       if (!fs.existsSync(linkPath) && !isStaleLink(linkPath)) continue;
 
       const method = getLinkMethod(linkPath);
-      if (method) {
+      if (method && isAspgManaged(linkPath)) {
         console.warn(`⚠ ${def.linkDir} — ${vendor} is native but has ASPG-generated bridge — duplicate discovery risk`);
         console.warn(`  Run "aspg clean" to remove`);
         hasIssues = true;
-      } else if (fs.existsSync(linkPath)) {
+      } else {
         console.log(`· ${def.linkDir} exists but is not ASPG-managed (${vendor})`);
       }
       continue;
@@ -66,6 +73,11 @@ export async function doctorCommand(): Promise<void> {
     }
 
     if (method === 'copy') {
+      if (process.platform !== 'win32') {
+        console.error(`✗ ${def.linkDir} — copy fallback is unsupported on ${process.platform}; quarantined without mutation (${vendor})`);
+        hasIssues = true;
+        continue;
+      }
       if (isCopyInSync(linkPath, ssotPath)) {
         console.log(`✓ ${def.linkDir} — copy fallback, in sync (${vendor})`);
       } else {
@@ -78,6 +90,12 @@ export async function doctorCommand(): Promise<void> {
         }
         hasIssues = true;
       }
+      continue;
+    }
+
+    if (!isAspgManaged(linkPath)) {
+      console.error(`✗ ${def.linkDir} — foreign or unrecorded link; refusing mutation (${vendor})`);
+      hasIssues = true;
       continue;
     }
 
@@ -109,7 +127,7 @@ export async function doctorCommand(): Promise<void> {
     const method = getLinkMethod(linkPath);
     if (method === 'symlink') continue;
 
-    if (method === 'copy') {
+    if (method === 'copy' && process.platform === 'win32') {
       const copyFiles = fs.readdirSync(linkPath)
         .filter((f) => f !== '.aspg-copy-fallback');
       const ssotSkills = new Set(skills);
