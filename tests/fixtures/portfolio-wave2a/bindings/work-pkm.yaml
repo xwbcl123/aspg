@@ -1,0 +1,5 @@
+version: 1
+portfolio:
+  repository: git@github.com:xwbcl123/Martin-brew-skills-private.git
+  revision: 6582a25e7d96fc872ce8de05dd98fe43d7e0626e
+  deployment: work-pkm

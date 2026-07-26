@@ -15,7 +15,11 @@ import {
   type PortfolioManifest,
   type ProjectBinding,
 } from './portfolio-schema.js';
-import { hashSkillSubtree, type SkillSubtreeDigest } from './portfolio-hash.js';
+import {
+  hashSkillSubtree,
+  hashSkillSubtreeAtRevision,
+  type SkillSubtreeDigest,
+} from './portfolio-hash.js';
 import type { InstallBackend, RuntimeOwnershipMode } from './profile-schema.js';
 import { forbiddenCanonicalSuffix } from './canonical-identity.js';
 
@@ -223,6 +227,28 @@ function addDiagnostic(
   context: Partial<Pick<PortfolioDiagnostic, 'deployment' | 'project_ref' | 'skill_id'>> = {},
 ): void {
   diagnostics.push({ severity, code, message, ...context });
+}
+
+function addDataDependencyDiagnostic(
+  diagnostics: PortfolioDiagnostic[],
+  code: string,
+  dependencyId: string,
+  message: string,
+  skillId: string,
+  deployments: string[] = [],
+): void {
+  const scopes: Array<string | undefined> = deployments.length > 0
+    ? deployments
+    : [undefined];
+  for (const deployment of scopes) {
+    addDiagnostic(
+      diagnostics,
+      'error',
+      code,
+      `${dependencyId}: ${message}`,
+      { deployment, skill_id: skillId },
+    );
+  }
 }
 
 function readYaml<T>(
@@ -716,6 +742,121 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
       }
     }
 
+    const manifestDependencies = new Map(
+      definition.data_dependencies.map((dependency) => [dependency.id, dependency]),
+    );
+    const lockedDependencies = locked?.data_dependencies ?? {};
+    for (const dependency of definition.data_dependencies) {
+      const dependencyLock = lockedDependencies[dependency.id];
+      const dependencyScopes = dependency.deployments;
+      const sourceDefinition = manifest.sources[dependency.source];
+      if (
+        dependency.source !== definition.source
+        || !sourceDefinition
+        || sourceDefinition.privacy !== 'private'
+      ) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-scope-divergent',
+          dependency.id,
+          'work-private data must use the canonical Skill private source',
+          skillId,
+          dependencyScopes,
+        );
+      }
+      if (dependency.required && !dependencyLock) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-lock-missing',
+          dependency.id,
+          'required data dependency has no Lock entry',
+          skillId,
+          dependencyScopes,
+        );
+      }
+      if (!dependencyLock || !locked) continue;
+
+      if (dependencyLock.source_revision !== locked.source_revision) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-revision-divergent',
+          dependency.id,
+          'source_revision differs from the canonical Skill source_revision',
+          skillId,
+          dependencyScopes,
+        );
+      }
+      if (dependencyLock.path !== dependency.path) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-path-divergent',
+          dependency.id,
+          'Lock path differs from the Manifest data dependency path',
+          skillId,
+          dependencyScopes,
+        );
+      }
+
+      const configuredSourceRoot = device?.source_roots[definition.source];
+      const sourceRoot = configuredSourceRoot ? safeRealpath(configuredSourceRoot) : null;
+      if (!sourceRoot) continue;
+
+      let dependencyDigest: SkillSubtreeDigest;
+      try {
+        dependencyDigest = hashSkillSubtreeAtRevision(
+          sourceRoot,
+          {
+            revision: locked.source_revision,
+            sourcePath: dependency.path,
+          },
+        );
+      } catch (error) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-subtree-missing',
+          dependency.id,
+          (error as Error).message,
+          skillId,
+          dependencyScopes,
+        );
+        continue;
+      }
+      if (dependencyDigest.tree_hash !== dependencyLock.tree_hash) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-hash-drift',
+          dependency.id,
+          `${dependencyDigest.tree_hash} != ${dependencyLock.tree_hash}`,
+          skillId,
+          dependencyScopes,
+        );
+      }
+      if (!equalSets(
+        dependencyDigest.executable_files,
+        dependencyLock.executable_files,
+      )) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-executable-manifest-drift',
+          dependency.id,
+          'executable file manifest differs from the pinned Git object graph',
+          skillId,
+          dependencyScopes,
+        );
+      }
+    }
+    for (const dependencyId of Object.keys(lockedDependencies).sort(compareText)) {
+      if (!manifestDependencies.has(dependencyId)) {
+        addDataDependencyDiagnostic(
+          diagnostics,
+          'data-dependency-lock-orphan',
+          dependencyId,
+          'Lock entry has no Manifest data dependency',
+          skillId,
+        );
+      }
+    }
+
     skills.set(skillId, {
       skill_id: skillId,
       source: definition.source,
@@ -838,6 +979,34 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
     }
   }
 
+  for (const [skillId, skill] of Object.entries(manifest.skills)
+    .sort(([a], [b]) => compareText(a, b))) {
+    for (const dependency of skill.data_dependencies) {
+      for (const deploymentName of dependency.deployments) {
+        const deployment = deployments.get(deploymentName);
+        const definition = manifest.deployments[deploymentName];
+        const project = definition
+          ? manifest.projects[definition.project_ref]
+          : undefined;
+        if (
+          !deployment
+          || !project
+          || project.expected_vault !== 'work-pkm'
+          || !deployment.selected_skills.includes(skillId)
+        ) {
+          addDataDependencyDiagnostic(
+            diagnostics,
+            'data-dependency-scope-divergent',
+            dependency.id,
+            'work-private data requires an explicit Work-PKM deployment selecting the Skill',
+            skillId,
+            [deploymentName],
+          );
+        }
+      }
+    }
+  }
+
   const bindingIdentities = [...projects.values()]
     .filter((project) => project.binding)
     .map((project) => ({
@@ -952,12 +1121,21 @@ function planFromState(state: PortfolioState, deploymentName: string): Portfolio
       const expectedDigest = skill.tree_hash
         ? { tree_hash: skill.tree_hash, executable_files: skill.executable_files }
         : null;
-      const health = resolveTargetHealth(
+      let health = resolveTargetHealth(
         skill.ownership,
         skill.source_path,
         expectedDigest,
         target,
       );
+      const dependencyBlocked = state.diagnostics.some((diagnostic) => (
+        diagnostic.severity === 'error'
+        && diagnostic.code.startsWith('data-dependency-')
+        && diagnostic.skill_id === skillId
+        && (!diagnostic.deployment || diagnostic.deployment === deploymentName)
+      ));
+      if (dependencyBlocked) {
+        health = { action: 'blocked', health: 'data-dependency-unhealthy' };
+      }
       if (health.health === 'exposure-collision' || health.health === 'foreign-link') {
         errors.push({
           severity: 'error',

@@ -1,0 +1,27 @@
+version: 2
+devices:
+  mac-mini:
+    platform: darwin
+    state_root: /fixtures/device-state/aspg
+    source_roots:
+      anthropic-skills: /fixtures/sources/anthropic-skills
+      kepano-obsidian-skills: /fixtures/sources/kepano-obsidian-skills
+      kunchenguid-lavish-axi: /fixtures/sources/kunchenguid-lavish-axi
+      majiayu000-spellbook: /fixtures/sources/majiayu000-spellbook
+      martin-brew-skills-private: /fixtures/sources/martin-brew-skills-private
+      mattpocock-skills: /fixtures/sources/mattpocock-skills
+      minimax-cli: /fixtures/sources/minimax-cli
+      mvanhorn-last30days: /fixtures/sources/mvanhorn-last30days
+      teng-lin-notebooklm: /fixtures/sources/teng-lin-notebooklm
+      tw93-kami: /fixtures/sources/tw93-kami
+    runtime_roots:
+      life-os-agents:
+        project_ref: life-os-cloudstorage
+        path: /fixtures/runtime/life-os/agents-skills
+        storage_provider: google-drive-file-provider
+        deployment_backend: managed-materialized
+      work-pkm-agents:
+        project_ref: work-pkm-local
+        path: /fixtures/runtime/work-pkm/agents-skills
+        storage_provider: local-filesystem
+        deployment_backend: managed-link

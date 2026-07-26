@@ -37,13 +37,30 @@ function looksAbsolute(value: string): boolean {
     || /^file:/i.test(value);
 }
 
+function usesWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value);
+}
+
 function isSameOrWithinAbsolute(parent: string, candidate: string): boolean {
-  const pathApi = path.win32.isAbsolute(parent) || path.win32.isAbsolute(candidate)
-    ? path.win32
-    : path.posix;
+  const parentIsWindows = usesWindowsAbsolutePath(parent);
+  const candidateIsWindows = usesWindowsAbsolutePath(candidate);
+  if (parentIsWindows !== candidateIsWindows) return false;
+  const pathApi = parentIsWindows ? path.win32 : path.posix;
   const relative = pathApi.relative(pathApi.normalize(parent), pathApi.normalize(candidate));
   return relative === ''
     || (!relative.startsWith('..') && !pathApi.isAbsolute(relative));
+}
+
+function isNormalizedAbsoluteDevicePath(value: string): boolean {
+  if (usesWindowsAbsolutePath(value)) {
+    return path.win32.normalize(value) === value.replaceAll('/', '\\');
+  }
+  return path.posix.isAbsolute(value) && path.posix.normalize(value) === value;
+}
+
+function isFilesystemRoot(value: string): boolean {
+  const pathApi = usesWindowsAbsolutePath(value) ? path.win32 : path.posix;
+  return pathApi.normalize(value) === pathApi.parse(value).root;
 }
 
 function rejectAbsoluteStrings(
@@ -143,11 +160,45 @@ export const AbsoluteDevicePathSchema = z.string().min(1).refine(
   'device registry paths must be absolute',
 );
 
+export const NormalizedAbsoluteDevicePathSchema = AbsoluteDevicePathSchema
+  .refine(
+    (value) => path.posix.isAbsolute(value) || usesWindowsAbsolutePath(value),
+    'device registry paths must be fully qualified absolute paths',
+  )
+  .refine(isNormalizedAbsoluteDevicePath, 'device registry paths must be normalized')
+  .refine((value) => !isFilesystemRoot(value), 'device registry paths must not be a filesystem root');
+
 export const PortfolioSourceSchema = z.object({
   kind: z.literal('git'),
   repository: z.string().trim().min(1),
   privacy: z.enum(['private', 'sanitized-public', 'third-party']),
 }).strict();
+
+export const PortfolioDataDependencySchema = z.object({
+  id: PortfolioPortableIdSchema,
+  source: PortfolioPortableIdSchema,
+  path: PortfolioSkillPathSchema,
+  privacy: z.literal('work-private'),
+  deployments: z.array(PortfolioPortableIdSchema).min(1),
+  required: z.boolean(),
+}).strict().superRefine((dependency, ctx) => {
+  const unique = new Set(dependency.deployments);
+  if (unique.size !== dependency.deployments.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['deployments'],
+      message: 'data dependency deployments must not contain duplicates',
+    });
+  }
+  const sorted = [...dependency.deployments].sort();
+  if (sorted.some((entry, index) => entry !== dependency.deployments[index])) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['deployments'],
+      message: 'data dependency deployments must be sorted for deterministic manifests',
+    });
+  }
+});
 
 export const PortfolioSkillSchema = z.object({
   source: PortfolioPortableIdSchema,
@@ -156,12 +207,21 @@ export const PortfolioSkillSchema = z.object({
   exposure_name: PortfolioPortableIdSchema,
   description_chars: z.number().int().nonnegative(),
   capabilities: z.array(PortfolioPortableIdSchema).default([]),
+  data_dependencies: z.array(PortfolioDataDependencySchema).default([]),
 }).strict().superRefine((skill, ctx) => {
   if (skill.ownership === 'project-local' || skill.ownership === 'runtime-native') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['ownership'],
       message: `${skill.ownership} is not a centrally revisioned Portfolio Skill`,
+    });
+  }
+  const ids = skill.data_dependencies.map((dependency) => dependency.id);
+  if (new Set(ids).size !== ids.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['data_dependencies'],
+      message: 'data dependency IDs must be unique within one canonical Skill',
     });
   }
 });
@@ -212,6 +272,30 @@ export const PortfolioLockedSourceSchema = z.object({
   revision: GitRevisionSchema,
 }).strict();
 
+export const PortfolioLockedDataDependencySchema = z.object({
+  source_revision: GitRevisionSchema,
+  path: PortfolioSkillPathSchema,
+  tree_hash: SkillTreeHashSchema,
+  executable_files: z.array(PortableRelativePathSchema).default([]),
+}).strict().superRefine((dependency, ctx) => {
+  const unique = new Set(dependency.executable_files);
+  if (unique.size !== dependency.executable_files.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['executable_files'],
+      message: 'data dependency executable_files must not contain duplicates',
+    });
+  }
+  const sorted = [...dependency.executable_files].sort();
+  if (sorted.some((entry, index) => entry !== dependency.executable_files[index])) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['executable_files'],
+      message: 'data dependency executable_files must be sorted for deterministic locks',
+    });
+  }
+});
+
 export const PortfolioLockedSkillSchema = z.object({
   source: PortfolioPortableIdSchema,
   path: PortfolioSkillPathSchema,
@@ -219,6 +303,10 @@ export const PortfolioLockedSkillSchema = z.object({
   tree_hash: SkillTreeHashSchema,
   executable_files: z.array(PortableRelativePathSchema).default([]),
   overlay_hash: SkillTreeHashSchema.nullable().default(null),
+  data_dependencies: z.record(
+    PortfolioPortableIdSchema,
+    PortfolioLockedDataDependencySchema,
+  ).default({}),
 }).strict().superRefine((skill, ctx) => {
   const unique = new Set(skill.executable_files);
   if (unique.size !== skill.executable_files.length) {
@@ -347,5 +435,106 @@ export const PortfolioDeviceRegistrySchema = z.object({
   devices: z.record(PortfolioPortableIdSchema, PortfolioDeviceSchema),
 }).strict();
 export type PortfolioDeviceRegistry = z.infer<typeof PortfolioDeviceRegistrySchema>;
+
+export const PortfolioStorageProviderSchema = z.enum([
+  'local-filesystem',
+  'google-drive-file-provider',
+]);
+
+export const PortfolioDeploymentBackendSchema = z.enum([
+  'managed-link',
+  'managed-materialized',
+]);
+
+export const PortfolioRuntimeRootSchema = z.object({
+  project_ref: PortfolioPortableIdSchema,
+  path: NormalizedAbsoluteDevicePathSchema,
+  storage_provider: PortfolioStorageProviderSchema,
+  deployment_backend: PortfolioDeploymentBackendSchema,
+}).strict().superRefine((runtimeRoot, ctx) => {
+  if (
+    runtimeRoot.storage_provider === 'google-drive-file-provider'
+    && runtimeRoot.deployment_backend !== 'managed-materialized'
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['deployment_backend'],
+      message: 'google-drive-file-provider requires managed-materialized',
+    });
+  }
+});
+
+export const PortfolioDeviceV2Schema = z.object({
+  platform: z.enum(['darwin', 'linux', 'win32']),
+  state_root: NormalizedAbsoluteDevicePathSchema,
+  source_roots: z.record(
+    PortfolioPortableIdSchema,
+    NormalizedAbsoluteDevicePathSchema,
+  ),
+  runtime_roots: z.record(
+    PortfolioPortableIdSchema,
+    PortfolioRuntimeRootSchema,
+  ),
+}).strict().superRefine((device, ctx) => {
+  const roots: Array<{
+    label: string;
+    path: string;
+    issuePath: Array<string | number>;
+  }> = [
+    {
+      label: 'state_root',
+      path: device.state_root,
+      issuePath: ['state_root'],
+    },
+    ...Object.entries(device.source_roots).map(([rootId, rootPath]) => ({
+      label: `source_roots.${rootId}`,
+      path: rootPath,
+      issuePath: ['source_roots', rootId],
+    })),
+    ...Object.entries(device.runtime_roots).map(([rootId, runtimeRoot]) => ({
+      label: `runtime_roots.${rootId}`,
+      path: runtimeRoot.path,
+      issuePath: ['runtime_roots', rootId, 'path'],
+    })),
+  ];
+
+  for (const root of roots) {
+    const matchesPlatform = device.platform === 'win32'
+      ? usesWindowsAbsolutePath(root.path)
+      : path.posix.isAbsolute(root.path) && !usesWindowsAbsolutePath(root.path);
+    if (!matchesPlatform) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: root.issuePath,
+        message: `${root.label} path style must match ${device.platform}`,
+      });
+    }
+  }
+
+  for (let left = 0; left < roots.length; left += 1) {
+    for (let right = left + 1; right < roots.length; right += 1) {
+      if (
+        isSameOrWithinAbsolute(roots[left].path, roots[right].path)
+        || isSameOrWithinAbsolute(roots[right].path, roots[left].path)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: roots[right].issuePath,
+          message: `${roots[right].label} must not overlap ${roots[left].label}`,
+        });
+      }
+    }
+  }
+});
+
+/**
+ * Additive v2 contract. PortfolioDeviceRegistrySchema intentionally remains
+ * the v1 active reader until the serialized Wave 6 integration.
+ */
+export const PortfolioDeviceRegistryV2Schema = z.object({
+  version: z.literal(2),
+  devices: z.record(PortfolioPortableIdSchema, PortfolioDeviceV2Schema),
+}).strict();
+export type PortfolioDeviceRegistryV2 = z.infer<typeof PortfolioDeviceRegistryV2Schema>;
 
 export type PortfolioBackend = z.infer<typeof InstallBackendSchema>;

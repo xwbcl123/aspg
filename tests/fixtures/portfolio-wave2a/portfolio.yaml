@@ -1,0 +1,286 @@
+version: 1
+portfolio: martin-skills
+command_maturity:
+  portfolio_plan: mvp
+  portfolio_apply: future
+concurrency:
+  activation_lock: device-local
+sources:
+  anthropic-skills:
+    kind: git
+    repository: https://github.com/anthropics/skills.git
+    privacy: third-party
+  kepano-obsidian-skills:
+    kind: git
+    repository: https://github.com/kepano/obsidian-skills.git
+    privacy: third-party
+  kunchenguid-lavish-axi:
+    kind: git
+    repository: https://github.com/kunchenguid/lavish-axi.git
+    privacy: third-party
+  majiayu000-spellbook:
+    kind: git
+    repository: https://github.com/majiayu000/spellbook.git
+    privacy: third-party
+  martin-brew-skills-private:
+    kind: git
+    repository: git@github.com:xwbcl123/Martin-brew-skills-private.git
+    privacy: private
+  mattpocock-skills:
+    kind: git
+    repository: https://github.com/mattpocock/skills.git
+    privacy: third-party
+  minimax-cli:
+    kind: git
+    repository: https://github.com/MiniMax-AI/cli.git
+    privacy: third-party
+  mvanhorn-last30days:
+    kind: git
+    repository: https://github.com/mvanhorn/last30days-skill.git
+    privacy: third-party
+  teng-lin-notebooklm:
+    kind: git
+    repository: https://github.com/teng-lin/notebooklm-py.git
+    privacy: third-party
+  tw93-kami:
+    kind: git
+    repository: https://github.com/tw93/Kami.git
+    privacy: third-party
+skills:
+  anthropic/docx:
+    source: anthropic-skills
+    path: skills/docx
+    ownership: managed-link
+    exposure_name: docx
+    description_chars: 835
+    capabilities: []
+  anthropic/frontend-design:
+    source: anthropic-skills
+    path: skills/frontend-design
+    ownership: managed-link
+    exposure_name: frontend-design
+    description_chars: 204
+    capabilities: []
+  anthropic/pdf:
+    source: anthropic-skills
+    path: skills/pdf
+    ownership: managed-link
+    exposure_name: pdf
+    description_chars: 437
+    capabilities: []
+  anthropic/pptx:
+    source: anthropic-skills
+    path: skills/pptx
+    ownership: managed-link
+    exposure_name: pptx
+    description_chars: 732
+    capabilities: []
+  anthropic/skill-creator:
+    source: anthropic-skills
+    path: skills/skill-creator
+    ownership: managed-link
+    exposure_name: skill-creator
+    description_chars: 319
+    capabilities: []
+  anthropic/theme-factory:
+    source: anthropic-skills
+    path: skills/theme-factory
+    ownership: managed-link
+    exposure_name: theme-factory
+    description_chars: 262
+    capabilities: []
+  anthropic/xlsx:
+    source: anthropic-skills
+    path: skills/xlsx
+    ownership: managed-link
+    exposure_name: xlsx
+    description_chars: 948
+    capabilities: []
+  kepano/defuddle:
+    source: kepano-obsidian-skills
+    path: skills/defuddle
+    ownership: managed-link
+    exposure_name: defuddle
+    description_chars: 347
+    capabilities: []
+  kepano/json-canvas:
+    source: kepano-obsidian-skills
+    path: skills/json-canvas
+    ownership: managed-link
+    exposure_name: json-canvas
+    description_chars: 225
+    capabilities: []
+  kepano/obsidian-bases:
+    source: kepano-obsidian-skills
+    path: skills/obsidian-bases
+    ownership: managed-link
+    exposure_name: obsidian-bases
+    description_chars: 256
+    capabilities: []
+  kepano/obsidian-markdown:
+    source: kepano-obsidian-skills
+    path: skills/obsidian-markdown
+    ownership: managed-link
+    exposure_name: obsidian-markdown
+    description_chars: 262
+    capabilities: []
+  kunchenguid/lavish-design:
+    source: kunchenguid-lavish-axi
+    path: .agents/skills/lavish-design
+    ownership: managed-link
+    exposure_name: lavish-design
+    description_chars: 236
+    capabilities: []
+  majiayu000/codex-fluent:
+    source: majiayu000-spellbook
+    path: skills/codex-fluent
+    ownership: managed-link
+    exposure_name: codex-fluent
+    description_chars: 259
+    capabilities: []
+  majiayu000/codex-retrospective:
+    source: majiayu000-spellbook
+    path: skills/codex-retrospective
+    ownership: managed-link
+    exposure_name: codex-retrospective
+    description_chars: 307
+    capabilities: []
+  martin/audio-transcriber:
+    source: martin-brew-skills-private
+    path: skills/audio-transcriber
+    ownership: managed-link
+    exposure_name: audio-transcriber
+    description_chars: 267
+    capabilities: []
+  martin/brand-guidelines:
+    source: martin-brew-skills-private
+    path: skills/brand-guidelines
+    ownership: managed-link
+    exposure_name: brand-guidelines
+    description_chars: 344
+    capabilities: []
+  martin/doc-intelligent-summary:
+    source: martin-brew-skills-private
+    path: skills/doc-intelligent-summary
+    ownership: managed-link
+    exposure_name: doc-intelligent-summary
+    description_chars: 124
+    capabilities: []
+  martin/notebooklm-export-formatter:
+    source: martin-brew-skills-private
+    path: skills/notebooklm-export-formatter
+    ownership: managed-link
+    exposure_name: notebooklm-export-formatter
+    description_chars: 356
+    capabilities: []
+  mattpocock/handoff:
+    source: mattpocock-skills
+    path: skills/productivity/handoff
+    ownership: managed-link
+    exposure_name: handoff
+    description_chars: 86
+    capabilities: []
+  mattpocock/teach:
+    source: mattpocock-skills
+    path: skills/productivity/teach
+    ownership: managed-link
+    exposure_name: teach
+    description_chars: 61
+    capabilities: []
+  minimax/mmx-cli:
+    source: minimax-cli
+    path: skill
+    ownership: managed-link
+    exposure_name: mmx-cli
+    description_chars: 233
+    capabilities: []
+  mvanhorn/last30days:
+    source: mvanhorn-last30days
+    path: skills/last30days
+    ownership: managed-link
+    exposure_name: last30days
+    description_chars: 246
+    capabilities: []
+  teng-lin/notebooklm:
+    source: teng-lin-notebooklm
+    path: .
+    ownership: managed-link
+    exposure_name: notebooklm
+    description_chars: 265
+    capabilities: []
+  tw93/kami:
+    source: tw93-kami
+    path: .
+    ownership: managed-link
+    exposure_name: kami
+    description_chars: 549
+    capabilities: []
+profiles:
+  life-os-current:
+    include:
+      - anthropic/docx
+      - anthropic/frontend-design
+      - anthropic/pdf
+      - anthropic/pptx
+      - anthropic/xlsx
+      - kepano/defuddle
+      - kepano/json-canvas
+      - kepano/obsidian-bases
+      - kepano/obsidian-markdown
+      - kunchenguid/lavish-design
+      - majiayu000/codex-fluent
+      - majiayu000/codex-retrospective
+      - martin/audio-transcriber
+      - martin/brand-guidelines
+      - martin/doc-intelligent-summary
+      - martin/notebooklm-export-formatter
+      - mattpocock/handoff
+      - mattpocock/teach
+      - minimax/mmx-cli
+      - mvanhorn/last30days
+      - tw93/kami
+    exclude: []
+    budgets:
+      max_skills: 32
+      max_description_chars: 12000
+  work-pkm-current:
+    include:
+      - anthropic/docx
+      - anthropic/frontend-design
+      - anthropic/pdf
+      - anthropic/pptx
+      - anthropic/skill-creator
+      - anthropic/theme-factory
+      - anthropic/xlsx
+      - majiayu000/codex-fluent
+      - majiayu000/codex-retrospective
+      - martin/audio-transcriber
+      - martin/brand-guidelines
+      - martin/doc-intelligent-summary
+      - martin/notebooklm-export-formatter
+      - mattpocock/handoff
+      - minimax/mmx-cli
+      - teng-lin/notebooklm
+      - tw93/kami
+    exclude: []
+    budgets:
+      max_skills: 32
+      max_description_chars: 12000
+deployments:
+  life-os:
+    project_ref: life-os-cloudstorage
+    profiles:
+      - life-os-current
+    include: []
+    exclude: []
+  work-pkm:
+    project_ref: work-pkm-local
+    profiles:
+      - work-pkm-current
+    include: []
+    exclude: []
+projects:
+  life-os-cloudstorage:
+    expected_vault: life-os
+  work-pkm-local:
+    expected_vault: work-pkm

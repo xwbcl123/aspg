@@ -42,6 +42,13 @@ skills:
     exposure_name: audio-transcriber
     description_chars: 280
     capabilities: [audio-transcription]
+    data_dependencies:
+      - id: cstc-eu-rspo-employer-pack
+        source: private
+        path: packs/work-private/artifact-template-cstc-eu-rspo-default-deck
+        privacy: work-private
+        deployments: [work-pkm]
+        required: true
 profiles:
   life-default:
     include: [martin/audio-transcriber]
@@ -55,9 +62,16 @@ deployments:
     profiles: [life-default]
     include: []
     exclude: []
+  work-pkm:
+    project_ref: work-pkm-local
+    profiles: [life-default]
+    include: []
+    exclude: []
 projects:
   life-os-cloudstorage:
     expected_vault: life-os
+  work-pkm-local:
+    expected_vault: work-pkm
 ```
 
 ## Example: Portfolio Lock
@@ -76,8 +90,16 @@ skills:
     executable_files:
       - scripts/transcribe_audio_gemini.py
     overlay_hash: null
+    data_dependencies:
+      cstc-eu-rspo-employer-pack:
+        source_revision: 0123456789abcdef0123456789abcdef01234567
+        path: packs/work-private/artifact-template-cstc-eu-rspo-default-deck
+        tree_hash: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        executable_files: []
 deployments:
   life-os:
+    resolved_skills: [martin/audio-transcriber]
+  work-pkm:
     resolved_skills: [martin/audio-transcriber]
 exceptions:
   - skill: martin/audio-transcriber
@@ -93,27 +115,62 @@ subtree. The SHA-256 stream includes each entry's portable relative path, file
 type, file bytes or symlink-target bytes, and regular-file executable bit.
 `executable_files` is independently compared with the observed subtree.
 
-A non-root Skill hashes every filesystem entry; names such as `.git`, `.aspg`
-and managed-link sidecars are ordinary Skill content at every depth.
+Lock authoring hashes every root and non-root Skill in exact mode with
+`{ revision, sourcePath }`. Its path universe is:
 
-A repository-root Skill uses `path: .` and must supply its pinned 40-character
-Git revision. ASPG uses `git ls-tree` at that revision as the tracked path
-universe, then hashes the corresponding worktree bytes, types and executable
-modes. Only top-level repository control state (`.git/`, `.aspg/`,
-`.aspg-copy-fallback` and managed-link sidecars) is excluded. Nested control
-names that are tracked remain part of the digest and executable manifest;
-untracked nested control content fails closed.
+```text
+git ls-tree -r -z --full-tree <revision> -- <sourcePath>
+```
 
-Untracked build output is excluded only when a `.gitignore` that is itself
-tracked at the pinned revision matches it **and** its worktree bytes, file type
-and executable mode exactly equal the pinned blob. A dirty `.gitignore` may
-change the visible digest, but it may never authorize an exclusion; if one of
-its new rules matches content, hashing fails closed. Other untracked content
-also fails closed. If the Git root, pinned revision, tracked paths, pinned
-ignore blob or ignore provenance cannot be verified, no digest is returned.
-This keeps equivalent clones stable across gitignored `.venv/`, `__pycache__/`
-and `dist/` output without a broad filename ignore list or a lock-authoring
-bypass.
+`sourcePath` is the portable path recorded by the Manifest and Lock; `.` means
+the repository root. ASPG proves that the supplied Skill directory resolves to
+that exact path in the source worktree, that `HEAD` equals the recorded
+40-character revision, and that the complete source worktree is clean. A dirty
+source is refused with the stable diagnostic prefix
+`dirty-source-refused:` followed by deterministically sorted offending paths.
+Lock authoring never hashes dirty bytes and never silently narrows the check to
+only the selected subtree.
+
+The pinned tracked set defines names and types. ASPG hashes worktree bytes,
+symlink targets and executable mode using paths relative to the Skill subtree.
+Missing entries, type drift and executable-mode drift fail closed. For a
+repository-root Skill only top-level repository control state (`.git/`,
+`.aspg/`, `.aspg-copy-fallback` and managed-link sidecars) is excluded. The
+same names inside a non-root Skill are nested content: tracked entries are
+hashed and untracked entries fail closed.
+
+Ignored build output is excluded only when the matching `.gitignore` is tracked
+at the pinned revision and its worktree bytes, file type and executable mode
+exactly equal the pinned blob. This applies to repository or ancestor
+`.gitignore` files that govern a non-root Skill. A dirty `.gitignore` therefore
+produces `dirty-source-refused` before a new rule can hide content. Other
+untracked content also fails closed. If the Git root, checked-out revision,
+tracked path set, ignore blob or ignore provenance cannot be verified, no
+digest is returned. This keeps equivalent clean clones stable across
+gitignored `.venv/`, `__pycache__/` and `dist/` output without a broad
+filename ignore list or a lock-authoring bypass.
+
+The legacy API remains available for read-only runtime comparison:
+`hashSkillSubtree(path)` hashes the visible non-root filesystem tree, while
+`{ rootSkill: true, revision }` preserves the earlier repository-root behavior.
+Neither legacy form is sufficient for authoring a new Lock. Callers must pass
+both `revision` and `sourcePath` to enable the blocking exact-source contract.
+
+Required same-Skill data dependencies are declared below the canonical Skill,
+so they do not create another Skill/Profile identity and do not consume Skill
+budgets. `work-private` dependencies must use the Skill's private source and
+name only explicit deployments whose project has `expected_vault: work-pkm`.
+Their Lock entries reuse the Skill's `source_revision` and pin path, tree hash,
+and executable manifest. Missing or orphan Lock entries, invalid scope, or
+revision/path/hash/executable-mode divergence fail closed.
+
+Lock authoring uses the clean exact-checkout API above. Read-only validation
+instead recomputes a dependency digest directly from the pinned Git object
+graph. This distinction is required for self-hosted Portfolio Locks: the Lock
+commit may be newer than the canonical-content commit it records, while the
+pinned tracked set remains independently verifiable. W2B validates only this
+contract; dependency projection and runtime configuration remain deferred to
+W6.
 
 The Manifest and Lock must contain the same canonical Skill set. Each Skill has
 exactly one Lock entry; deployment records contain only canonical IDs and may
@@ -154,9 +211,54 @@ devices:
       managed-materialized: materialize
 ```
 
-Absolute paths are rejected everywhere except the Device Registry. On Darwin
-and Linux, `managed-link` requires `symlink`; `copy` is never a managed-link
-fallback.
+This v1 form remains the active reader used by Portfolio commands and their
+fixtures until the serialized Wave 6 integration. Device Registry v2 is an
+additive schema; authoring it does not switch the current reader.
+
+## Example: Device Registry v2
+
+```yaml
+version: 2
+devices:
+  mac-mini:
+    platform: darwin
+    state_root: /srv/aspg/device-state
+    source_roots:
+      external: /srv/aspg/sources/third-party
+      private: /srv/aspg/sources/Martin-brew-skills-private
+    runtime_roots:
+      life-os-agents:
+        project_ref: life-os-cloudstorage
+        path: /srv/vaults/Life-OS/.agents/skills
+        storage_provider: google-drive-file-provider
+        deployment_backend: managed-materialized
+      work-pkm-agents:
+        project_ref: work-pkm-local
+        path: /srv/workspace/Work-PKM-Vault/.agents/skills
+        storage_provider: local-filesystem
+        deployment_backend: managed-link
+```
+
+v2 scopes `storage_provider` and `deployment_backend` to each runtime root, so
+one project may expose roots on different storage providers. Supported
+providers are `local-filesystem` and `google-drive-file-provider`; a Google
+Drive root must explicitly select `managed-materialized`, never
+`managed-link`. Every state, source and runtime root is an absolute normalized
+path, may not be the filesystem root, and may not equal, contain or be contained
+by another configured root on the same device.
+
+The pure v1→v2 migrator validates v1, preserves platform, `state_root` and
+`source_roots`, and returns a validated v2 document without filesystem writes.
+Because v1 has only project-level roots and device-wide backend capabilities,
+it cannot determine runtime-root provider/backend policy safely. The migrator
+therefore emits `runtime_roots: {}` instead of guessing from path names.
+Operators must explicitly populate and validate the runtime roots before v2 is
+activated. The migrator does not move projects, mutate runtimes or write a real
+Device Registry.
+
+Absolute paths are rejected everywhere except the Device Registry. In active
+v1 registries, Darwin and Linux `managed-link` requires `symlink`; `copy` is
+never a managed-link fallback.
 
 `concurrency.activation_lock: device-local` is a scope token, never a
 project-relative path. The concrete lock is resolved below the selected
@@ -201,9 +303,10 @@ Lifecycle Profiles.
 
 ## Schema evolution
 
-v1 readers reject every unsupported version. Schema changes require a pure,
+Readers reject every unsupported future version. Schema changes require a pure,
 explicit and tested `from_version -> to_version` migrator. A migration must
 produce byte-stable data for the same input, preserve a backup at its future
 write boundary, validate before and after migration, and must never mutate a
-runtime projection. v1 currently exposes only the tested `1 -> 1` identity
-migration; it does not pretend to understand a future version.
+runtime projection. The migration boundary now exposes the tested identity
+migrations plus Device Registry `1 -> 2`; it rejects `1 -> 2` for every other
+document kind and does not pretend to understand version 3.
