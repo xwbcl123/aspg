@@ -24,8 +24,20 @@ import {
   portfolioStatusCommand,
   portfolioValidateCommand,
 } from './commands/portfolio.js';
+import {
+  portfolioRuntimeApplyCommand,
+  portfolioRuntimeBootstrapCommand,
+  portfolioRuntimeDoctorCommand,
+  portfolioRuntimeRecoveryCommand,
+} from './commands/portfolio-runtime.js';
 
 const program = new Command();
+
+function parseExplicitBoolean(value: string): boolean {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error('expected true or false');
+}
 
 program
   .name('aspg')
@@ -177,7 +189,9 @@ lifecycleNext
 
 const portfolio = program
   .command('portfolio')
-  .description('Inspect and plan the cross-project Portfolio without runtime writes');
+  .description(
+    'Inspect Portfolio state and run explicitly fixture-scoped runtime transactions',
+  );
 
 function portfolioReadCommand(name: string, description: string): Command {
   return portfolio
@@ -221,5 +235,80 @@ portfolioReadCommand('deployment-view', 'Show the flattened generated deployment
   .action(async (opts) => {
     await portfolioDeploymentViewCommand(opts);
   });
+
+function portfolioRuntimeCommand(name: string, description: string): Command {
+  return portfolio
+    .command(name)
+    .description(description)
+    .requiredOption('--deployment <id>', 'One explicit deployment')
+    .requiredOption('--device <id>', 'Device identifier in Registry v2')
+    .requiredOption('--manifest <path>', 'Portfolio Manifest path')
+    .requiredOption('--lock <path>', 'Portfolio Lock path')
+    .requiredOption('--device-registry <path>', 'Device Registry v2 path')
+    .requiredOption('--fixture-root <path>', 'Explicit isolated child of $TMPDIR')
+    .option('--operation-id <id>', 'Explicit operation identifier')
+    .option(
+      '--provider-status <status>',
+      'Google Drive observation: online|offline|uncertain|conflict',
+    )
+    .option(
+      '--provider-hydrated <boolean>',
+      'Explicit Google Drive hydration observation',
+      parseExplicitBoolean,
+    )
+    .option(
+      '--provider-writable <boolean>',
+      'Explicit Google Drive writability observation',
+      parseExplicitBoolean,
+    )
+    .option('--provider-reason <text>', 'Provider observation detail')
+    .option('--dry-run', 'Resolve and plan with zero writes')
+    .option('--json', 'Emit deterministic JSON');
+}
+
+portfolioRuntimeCommand(
+  'apply',
+  'Apply one deployment inside an explicit temporary fixture only',
+).action(async (opts) => {
+  await portfolioRuntimeApplyCommand(opts, 'apply');
+});
+
+portfolioRuntimeCommand(
+  'refresh',
+  'Refresh one owned deployment inside an explicit temporary fixture only',
+).action(async (opts) => {
+  await portfolioRuntimeApplyCommand(opts, 'refresh');
+});
+
+portfolioRuntimeCommand(
+  'doctor',
+  'Inspect provider, state and target health without mutation',
+).action(async (opts) => {
+  await portfolioRuntimeDoctorCommand(opts);
+});
+
+portfolioRuntimeCommand(
+  'bootstrap-device-state',
+  'Explicitly adopt portable generation into a new fixture-only device state root',
+).action(async (opts) => {
+  await portfolioRuntimeBootstrapCommand(opts);
+});
+
+function portfolioRecoveryCommand(name: 'repair' | 'rollback'): void {
+  portfolio
+    .command(name)
+    .description(`${name} one interrupted fixture-only operation`)
+    .requiredOption('--device <id>', 'Device identifier in Registry v2')
+    .requiredOption('--device-registry <path>', 'Device Registry v2 path')
+    .requiredOption('--fixture-root <path>', 'Explicit isolated child of $TMPDIR')
+    .requiredOption('--operation-id <id>', 'Explicit operation identifier')
+    .option('--json', 'Emit deterministic JSON')
+    .action(async (opts) => {
+      await portfolioRuntimeRecoveryCommand(opts, name);
+    });
+}
+
+portfolioRecoveryCommand('repair');
+portfolioRecoveryCommand('rollback');
 
 program.parse();

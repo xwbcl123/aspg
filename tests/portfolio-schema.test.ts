@@ -291,6 +291,18 @@ describe('Portfolio schemas', () => {
     expect(() => PortfolioDeviceRegistryV2Schema.parse(runtimeOverlap)).toThrow(
       /must not overlap runtime_roots.life-os-agents/,
     );
+
+    const duplicateProject = structuredClone(documented);
+    duplicateProject.devices['mac-mini'].runtime_roots.duplicate = {
+      project_ref: duplicateProject.devices['mac-mini']
+        .runtime_roots['work-pkm-agents'].project_ref,
+      path: '/srv/vaults/Work-PKM-Second/.agents/skills',
+      storage_provider: 'local-filesystem',
+      deployment_backend: 'managed-link',
+    };
+    expect(() => PortfolioDeviceRegistryV2Schema.parse(duplicateProject)).toThrow(
+      /project_ref .* is already owned/,
+    );
   });
 
   it('validates v2 path style against the declared device platform', () => {

@@ -7,10 +7,10 @@ import { parseDocument } from 'yaml';
 import {
   PortfolioDateSchema,
   PortfolioDeviceRegistrySchema,
+  PortfolioDeviceRegistryV2Schema,
   PortfolioLockSchema,
   PortfolioManifestSchema,
   ProjectBindingSchema,
-  type PortfolioDeviceRegistry,
   type PortfolioLock,
   type PortfolioManifest,
   type ProjectBinding,
@@ -49,6 +49,9 @@ export interface PortfolioResolvedProject {
   realpath: string | null;
   binding_path: string | null;
   binding: ProjectBinding | null;
+  runtime_root: string | null;
+  storage_provider: 'local-filesystem' | 'google-drive-file-provider';
+  deployment_backend: 'managed-link' | 'managed-materialized' | null;
 }
 
 export interface PortfolioResolvedSkill {
@@ -80,10 +83,34 @@ export interface PortfolioResolvedDeployment {
   };
 }
 
+interface NormalizedRuntimeRoot {
+  project_ref: string;
+  path: string;
+  storage_provider: 'local-filesystem' | 'google-drive-file-provider';
+  deployment_backend: 'managed-link' | 'managed-materialized';
+}
+
+interface NormalizedDevice {
+  platform: 'darwin' | 'linux' | 'win32';
+  state_root: string;
+  source_roots: Record<string, string>;
+  project_roots: Record<string, string>;
+  backends: {
+    'managed-link': 'symlink' | 'junction' | 'copy';
+    'managed-materialized': 'materialize' | 'copy';
+  };
+  runtime_roots: Record<string, NormalizedRuntimeRoot>;
+}
+
+interface NormalizedDeviceRegistry {
+  version: 1 | 2;
+  devices: Record<string, NormalizedDevice>;
+}
+
 interface PortfolioState {
   manifest: PortfolioManifest;
   lock: PortfolioLock;
-  registry: PortfolioDeviceRegistry;
+  registry: NormalizedDeviceRegistry;
   deviceId: string;
   deviceStateRoot: string | null;
   asOf: string;
@@ -264,6 +291,71 @@ function readYaml<T>(
     );
   }
   return schema.parse(document.toJSON());
+}
+
+function readDeviceRegistry(filePath: string): NormalizedDeviceRegistry {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Portfolio device registry not found: ${filePath}`);
+  }
+  const document = parseDocument(fs.readFileSync(filePath, 'utf-8'));
+  if (document.errors.length > 0) {
+    throw new Error(
+      `Portfolio device registry YAML error: ${
+        document.errors.map((error) => error.message).join(', ')
+      }`,
+    );
+  }
+  const raw = document.toJSON();
+  const version = raw && typeof raw === 'object'
+    ? (raw as { version?: unknown }).version
+    : undefined;
+  if (version === 2) {
+    const registry = PortfolioDeviceRegistryV2Schema.parse(raw);
+    return {
+      version: 2,
+      devices: Object.fromEntries(
+        Object.entries(registry.devices).map(([deviceId, device]) => {
+          const runtimeRoots = Object.fromEntries(
+            Object.entries(device.runtime_roots).map(([rootId, runtimeRoot]) => [
+              rootId,
+              runtimeRoot,
+            ]),
+          );
+          const projectRoots: Record<string, string> = {};
+          for (const runtimeRoot of Object.values(runtimeRoots)) {
+            projectRoots[runtimeRoot.project_ref] = path.dirname(
+              path.dirname(runtimeRoot.path),
+            );
+          }
+          return [
+            deviceId,
+            {
+              ...device,
+              project_roots: projectRoots,
+              backends: {
+                'managed-link': device.platform === 'win32' ? 'junction' : 'symlink',
+                'managed-materialized': 'materialize',
+              },
+              runtime_roots: runtimeRoots,
+            } satisfies NormalizedDevice,
+          ];
+        }),
+      ),
+    };
+  }
+  const registry = PortfolioDeviceRegistrySchema.parse(raw);
+  return {
+    version: 1,
+    devices: Object.fromEntries(
+      Object.entries(registry.devices).map(([deviceId, device]) => [
+        deviceId,
+        {
+          ...device,
+          runtime_roots: {},
+        } satisfies NormalizedDevice,
+      ]),
+    ),
+  };
 }
 
 function effectiveDate(value?: string): string {
@@ -463,9 +555,17 @@ function resolveTargetHealth(
 function backendFor(
   state: PortfolioState,
   ownership: RuntimeOwnershipMode,
+  projectRef: string,
 ): InstallBackend {
   const device = state.registry.devices[state.deviceId];
   if (!device) return 'none';
+  const runtimeRoot = Object.values(device.runtime_roots)
+    .find((candidate) => candidate.project_ref === projectRef);
+  if (runtimeRoot) {
+    return runtimeRoot.deployment_backend === 'managed-link'
+      ? (device.platform === 'win32' ? 'junction' : 'symlink')
+      : 'materialize';
+  }
   if (ownership === 'managed-link' || ownership === 'managed-materialized') {
     return device.backends[ownership];
   }
@@ -483,11 +583,7 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
     PortfolioLockSchema,
     'Portfolio Lock',
   );
-  const registry = readYaml(
-    path.resolve(options.deviceRegistryPath),
-    PortfolioDeviceRegistrySchema,
-    'Portfolio device registry',
-  );
+  const registry = readDeviceRegistry(path.resolve(options.deviceRegistryPath));
   const asOf = effectiveDate(options.asOf);
   const diagnostics: PortfolioDiagnostic[] = [];
   const projects = new Map<string, PortfolioResolvedProject>();
@@ -540,6 +636,8 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
       .sort(([a], [b]) => compareText(a, b))) {
       const configuredRoot = device.project_roots[projectRef];
       const realpath = configuredRoot ? safeRealpath(configuredRoot) : null;
+      const runtimeRoot = Object.values(device.runtime_roots)
+        .find((candidate) => candidate.project_ref === projectRef);
       const resolved: PortfolioResolvedProject = {
         project_ref: projectRef,
         expected_vault: projectDefinition.expected_vault,
@@ -547,6 +645,11 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
         realpath,
         binding_path: realpath ? path.join(realpath, '.aspg', 'portfolio.yaml') : null,
         binding: null,
+        runtime_root: runtimeRoot?.path ?? (
+          realpath ? path.join(realpath, '.agents', 'skills') : null
+        ),
+        storage_provider: runtimeRoot?.storage_provider ?? 'local-filesystem',
+        deployment_backend: runtimeRoot?.deployment_backend ?? null,
       };
       projects.set(projectRef, resolved);
 
@@ -1115,14 +1218,19 @@ function planFromState(state: PortfolioState, deploymentName: string): Portfolio
       const locked = state.lock.skills[skillId];
       const manifestSkill = state.manifest.skills[skillId];
       if (!skill || !manifestSkill) continue;
-      const target = skill.ownership === 'catalog-only' || !project?.realpath
+      const target = skill.ownership === 'catalog-only' || !project?.runtime_root
         ? null
-        : path.join(project.realpath, '.agents', 'skills', skill.exposure_name);
+        : path.join(project.runtime_root, skill.exposure_name);
       const expectedDigest = skill.tree_hash
         ? { tree_hash: skill.tree_hash, executable_files: skill.executable_files }
         : null;
+      const backend = backendFor(state, skill.ownership, deployment.project_ref);
+      const effectiveOwnership: RuntimeOwnershipMode = backend === 'materialize'
+        || backend === 'copy'
+        ? 'managed-materialized'
+        : skill.ownership;
       let health = resolveTargetHealth(
-        skill.ownership,
+        effectiveOwnership,
         skill.source_path,
         expectedDigest,
         target,
@@ -1156,7 +1264,7 @@ function planFromState(state: PortfolioState, deploymentName: string): Portfolio
         action: health.action,
         exposure_name: skill.exposure_name,
         ownership: skill.ownership,
-        backend: backendFor(state, skill.ownership),
+        backend,
         source: skill.source,
         source_revision: locked?.source_revision ?? null,
         source_path: skill.source_path,

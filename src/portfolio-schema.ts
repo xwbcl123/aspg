@@ -476,6 +476,20 @@ export const PortfolioDeviceV2Schema = z.object({
     PortfolioRuntimeRootSchema,
   ),
 }).strict().superRefine((device, ctx) => {
+  const runtimeRootOwners = new Map<string, string>();
+  for (const [rootId, runtimeRoot] of Object.entries(device.runtime_roots)) {
+    const owner = runtimeRootOwners.get(runtimeRoot.project_ref);
+    if (owner) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['runtime_roots', rootId, 'project_ref'],
+        message: `project_ref ${runtimeRoot.project_ref} is already owned by runtime_roots.${owner}`,
+      });
+    } else {
+      runtimeRootOwners.set(runtimeRoot.project_ref, rootId);
+    }
+  }
+
   const roots: Array<{
     label: string;
     path: string;
@@ -528,8 +542,9 @@ export const PortfolioDeviceV2Schema = z.object({
 });
 
 /**
- * Additive v2 contract. PortfolioDeviceRegistrySchema intentionally remains
- * the v1 active reader until the serialized Wave 6 integration.
+ * Wave 6 active device contract. The read-only control plane also accepts v1
+ * through its deterministic compatibility adapter; runtime mutation requires
+ * v2 because provider/backend selection must be runtime-root scoped.
  */
 export const PortfolioDeviceRegistryV2Schema = z.object({
   version: z.literal(2),
