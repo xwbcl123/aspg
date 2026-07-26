@@ -32,6 +32,7 @@ export interface LifecycleDiagnostic {
   evidence_ref?: string;
   relation_target?: string;
   source_ref?: string;
+  source_path?: string;
 }
 
 export interface EvidenceResolution {
@@ -85,6 +86,7 @@ export interface LifecycleListEntry {
   skill_id: string;
   display_name: string;
   source_ref: string;
+  source_path?: string;
   owner_class: LifecycleProfile['owner_class'];
   learning: {
     current_level: LifecycleProfile['learning']['current_level'];
@@ -142,6 +144,21 @@ const DERIVATIVE_RELATIONS = new Set([
   'localized-derivative',
   'absorb',
 ]);
+const GIT_BACKED_SOURCE_TYPES = new Set(['git', 'git-submodule']);
+const FORBIDDEN_CANONICAL_SUFFIXES = [
+  'life-os',
+  'work-pkm',
+  'mac-mini',
+  'macbook-pro',
+  'linux',
+] as const;
+const BASENAME_RESOLVING_RELATIONS = new Set([
+  'configure',
+  'wrap',
+  'fork',
+  'localized-derivative',
+  'absorb',
+]);
 
 function diagnosticSort(a: LifecycleDiagnostic, b: LifecycleDiagnostic): number {
   return [
@@ -152,6 +169,7 @@ function diagnosticSort(a: LifecycleDiagnostic, b: LifecycleDiagnostic): number 
     a.code,
     a.evidence_ref ?? '',
     a.relation_target ?? '',
+    a.source_path ?? '',
     a.message,
   ].join('\0').localeCompare([
     b.registry_root,
@@ -161,6 +179,7 @@ function diagnosticSort(a: LifecycleDiagnostic, b: LifecycleDiagnostic): number 
     b.code,
     b.evidence_ref ?? '',
     b.relation_target ?? '',
+    b.source_path ?? '',
     b.message,
   ].join('\0'));
 }
@@ -178,6 +197,7 @@ function dedupeDiagnostics(diagnostics: LifecycleDiagnostic[]): LifecycleDiagnos
       diagnostic.evidence_ref ?? '',
       diagnostic.relation_target ?? '',
       diagnostic.source_ref ?? '',
+      diagnostic.source_path ?? '',
     ].join('\0');
     if (!unique.has(key)) unique.set(key, diagnostic);
   }
@@ -296,6 +316,10 @@ function isWithin(root: string, candidate: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function portableRelativePath(root: string, candidate: string): string {
+  return path.relative(root, candidate).split(path.sep).join('/');
+}
+
 function profileEvidence(profile: LifecycleProfile): Array<{
   location: string;
   evidence: Evidence;
@@ -329,7 +353,7 @@ function privacyDiagnostics(
         code: 'absolute-home-path',
         message: `${currentPath} contains an absolute user-home path`,
         registry_root: registryRoot,
-        profile_path: path.relative(registryRoot, profilePath),
+        profile_path: portableRelativePath(registryRoot, profilePath),
         skill_id: skillId,
       }];
     }
@@ -355,7 +379,7 @@ function resolveEvidence(
   const diagnostics: LifecycleDiagnostic[] = [];
   const resolutions: EvidenceResolution[] = [];
   const lookup = new Map<Evidence, EvidenceResolutionStatus>();
-  const relativeProfilePath = path.relative(registryRoot, profilePath);
+  const relativeProfilePath = portableRelativePath(registryRoot, profilePath);
   const common = {
     registry_root: registryRoot,
     profile_path: relativeProfilePath,
@@ -534,9 +558,10 @@ function sourceIntegrity(
   const checks: SourceIntegrityCheck[] = [];
   const common = {
     registry_root: registryRoot,
-    profile_path: path.relative(registryRoot, profilePath),
+    profile_path: portableRelativePath(registryRoot, profilePath),
     skill_id: profile.skill_id,
     source_ref: profile.source_ref,
+    ...(profile.source_path ? { source_path: profile.source_path } : {}),
   };
   const fail = (check: string, code: string, message: string) => {
     checks.push({ check, status: 'failed' as const, message });
@@ -544,6 +569,41 @@ function sourceIntegrity(
   };
   const pass = (check: string, message: string) =>
     checks.push({ check, status: 'verified', message });
+
+  if (source) {
+    const sourcePathRequired = (
+      profile.owner_class === 'private-canonical'
+      || profile.owner_class === 'sanitized-public'
+      || (
+        profile.owner_class === 'third-party'
+        && GIT_BACKED_SOURCE_TYPES.has(source.source_type ?? '')
+      )
+    );
+    if (sourcePathRequired && !profile.source_path) {
+      fail(
+        'source-path-declaration',
+        'source-path-required',
+        `${profile.owner_class} profile backed by ${source.source_type ?? 'canonical source'} requires source_path`,
+      );
+    } else if (profile.source_path) {
+      pass(
+        'source-path-declaration',
+        `portable source_path is declared: ${profile.source_path}`,
+      );
+    }
+
+    if (
+      profile.source_path
+      && source.skill_paths?.[profile.skill_id]
+      && source.skill_paths[profile.skill_id] !== profile.source_path
+    ) {
+      fail(
+        'source-path-catalog',
+        'source-skill-path-mismatch',
+        `profile source_path ${profile.source_path} does not match source catalog skill_paths entry ${source.skill_paths[profile.skill_id]}`,
+      );
+    }
+  }
 
   if (!source) {
     fail('catalog', 'source-reference-missing',
@@ -646,6 +706,87 @@ function sourceIntegrity(
   return { status, checks };
 }
 
+function canonicalNameDiagnostics(dossier: LifecycleDossier): LifecycleDiagnostic[] {
+  const basename = dossier.skill_id.split('/')[1];
+  const suffix = FORBIDDEN_CANONICAL_SUFFIXES.find((candidate) =>
+    basename.endsWith(`-${candidate}`));
+  if (!suffix) return [];
+  return [{
+    severity: 'error',
+    code: 'forbidden-canonical-suffix',
+    message: `canonical skill_id basename must not encode project or device suffix "-${suffix}"`,
+    registry_root: dossier.registry_root,
+    profile_path: dossier.profile_path,
+    skill_id: dossier.skill_id,
+  }];
+}
+
+function hasResolvingBasenameRelation(
+  first: LifecycleDossier,
+  second: LifecycleDossier,
+): boolean {
+  return [
+    [first, second],
+    [second, first],
+  ].some(([from, to]) =>
+    from.profile.disposition.relations.some((relation) =>
+      relation.target === to.skill_id
+      && BASENAME_RESOLVING_RELATIONS.has(relation.type)));
+}
+
+function validateCombinedIdentity(
+  dossiers: LifecycleDossier[],
+  diagnostics: LifecycleDiagnostic[],
+): void {
+  const identities = new Map<string, LifecycleDossier>();
+  const basenames = new Map<string, LifecycleDossier[]>();
+
+  for (const dossier of dossiers) {
+    diagnostics.push(...canonicalNameDiagnostics(dossier));
+
+    if (dossier.profile.source_path) {
+      const identityKey = `${dossier.profile.source_ref}\0${dossier.profile.source_path}`;
+      const first = identities.get(identityKey);
+      if (first) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'unique-source-ref-source-path',
+          message: `duplicate canonical identity (${dossier.profile.source_ref}, ${dossier.profile.source_path}); first declared by ${first.skill_id} at ${first.profile_path}`,
+          registry_root: dossier.registry_root,
+          profile_path: dossier.profile_path,
+          skill_id: dossier.skill_id,
+          source_ref: dossier.profile.source_ref,
+          source_path: dossier.profile.source_path,
+        });
+      } else {
+        identities.set(identityKey, dossier);
+      }
+    }
+
+    const basename = dossier.skill_id.split('/')[1];
+    const candidates = basenames.get(basename) ?? [];
+    for (const first of candidates) {
+      const firstNamespace = first.skill_id.split('/')[0];
+      const namespace = dossier.skill_id.split('/')[0];
+      if (
+        firstNamespace !== namespace
+        && !hasResolvingBasenameRelation(first, dossier)
+      ) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'cross-namespace-exposure-basename',
+          message: `canonical basename "${basename}" collides across namespaces (${first.skill_id}, ${dossier.skill_id}); add a direct lineage relation or resolve exposure mutual exclusion in Portfolio policy`,
+          registry_root: dossier.registry_root,
+          profile_path: dossier.profile_path,
+          skill_id: dossier.skill_id,
+        });
+      }
+    }
+    candidates.push(dossier);
+    basenames.set(basename, candidates);
+  }
+}
+
 function zodDiagnostics(
   error: ZodError,
   registryRoot: string,
@@ -656,7 +797,7 @@ function zodDiagnostics(
     code: 'schema-invalid',
     message: `${issue.path.join('.') || '<root>'}: ${issue.message}`,
     registry_root: registryRoot,
-    profile_path: path.relative(registryRoot, profilePath),
+    profile_path: portableRelativePath(registryRoot, profilePath),
   }));
 }
 
@@ -716,6 +857,7 @@ export function loadLifecycleRegistries(
   const skills: LifecycleDossier[] = [];
   const diagnostics: LifecycleDiagnostic[] = [];
   const seen = new Map<string, LifecycleDossier>();
+  const parsedDossiers: LifecycleDossier[] = [];
   const catalogs = new Map<string, Map<string, SourceEntry>>();
 
   for (const registryRoot of roots) {
@@ -751,7 +893,7 @@ export function loadLifecycleRegistries(
     }
 
     for (const profilePath of profilePaths) {
-      const relativeProfilePath = path.relative(registryRoot, profilePath);
+      const relativeProfilePath = portableRelativePath(registryRoot, profilePath);
       let raw: unknown;
       try {
         raw = parseYaml(fs.readFileSync(profilePath, 'utf8'));
@@ -806,6 +948,7 @@ export function loadLifecycleRegistries(
         ),
         source_integrity: integrity,
       };
+      parsedDossiers.push(dossier);
       const duplicate = seen.get(profile.skill_id);
       if (duplicate) {
         diagnostics.push({
@@ -823,6 +966,7 @@ export function loadLifecycleRegistries(
     }
   }
 
+  validateCombinedIdentity(parsedDossiers, diagnostics);
   validateLineage(skills, catalogs, diagnostics);
   return {
     schema_version: 1,
@@ -849,6 +993,7 @@ export function lifecycleList(snapshot: LifecycleRegistrySnapshot): LifecycleLis
     skill_id: dossier.skill_id,
     display_name: dossier.profile.display_name,
     source_ref: dossier.profile.source_ref,
+    ...(dossier.profile.source_path ? { source_path: dossier.profile.source_path } : {}),
     owner_class: dossier.profile.owner_class,
     learning: {
       current_level: dossier.profile.learning.current_level,

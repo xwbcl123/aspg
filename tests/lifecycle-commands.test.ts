@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import {
   lifecycleListCommand,
   lifecycleNextCommand,
@@ -24,10 +25,27 @@ let originalLog: typeof console.log;
 let originalError: typeof console.error;
 let originalWarn: typeof console.warn;
 
+function addFixtureIdentityDeclarations(root: string): void {
+  const declarations = [
+    ['registry/lifecycle/kepano/defuddle/profile.yaml', 'skills/defuddle'],
+    [
+      'registry/lifecycle/mattpocock/grill-with-docs/profile.yaml',
+      'skills/grill-with-docs',
+    ],
+  ] as const;
+  for (const [relativePath, sourcePath] of declarations) {
+    const profilePath = path.join(root, relativePath);
+    const profile = parseYaml(fs.readFileSync(profilePath, 'utf8')) as Record<string, unknown>;
+    profile.source_path = sourcePath;
+    fs.writeFileSync(profilePath, stringifyYaml(profile));
+  }
+}
+
 beforeEach(() => {
   process.exitCode = undefined as unknown as number;
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aspg-lifecycle-cli-'));
   fs.cpSync(fixtureRoot, tmpDir, { recursive: true });
+  addFixtureIdentityDeclarations(tmpDir);
   output = [];
   errors = [];
   originalLog = console.log;

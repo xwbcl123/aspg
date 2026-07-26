@@ -141,6 +141,31 @@ export const DispositionRelationSchema = z.object({
 export type DispositionRelation = z.infer<typeof DispositionRelationSchema>;
 
 const skillIdPattern = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+const portableSourcePathPattern = /^[^/\\\u0000-\u001f\u007f]+(?:\/[^/\\\u0000-\u001f\u007f]+)*$/;
+
+export const PortableSourcePathSchema = z.string()
+  .min(1, 'source_path must not be empty')
+  .regex(
+    portableSourcePathPattern,
+    'source_path must be a portable repository-relative path using forward slashes',
+  )
+  .refine(
+    (value) => value === value.trim(),
+    'source_path must not have leading or trailing whitespace',
+  )
+  .refine(
+    (value) => !value.split('/').some((segment) => segment === '.' || segment === '..'),
+    'source_path must not contain "." or ".." segments',
+  )
+  .refine(
+    (value) => !/^[a-zA-Z]:/.test(value),
+    'source_path must not be an absolute Windows path',
+  )
+  .refine(
+    (value) => !value.startsWith('~'),
+    'source_path must not be home-relative',
+  );
+export type PortableSourcePath = z.infer<typeof PortableSourcePathSchema>;
 
 export const LifecycleProfileSchema = z.object({
   schema_version: z.literal(1),
@@ -153,6 +178,7 @@ export const LifecycleProfileSchema = z.object({
     /^[a-z0-9][a-z0-9._-]*$/,
     'source_ref must be a portable source identifier',
   ),
+  source_path: PortableSourcePathSchema.optional(),
   owner_class: LifecycleOwnerClassSchema,
   learning: z.object({
     current_level: LearningLevelSchema,
@@ -180,7 +206,18 @@ export const LifecycleProfileSchema = z.object({
     triggers: z.array(z.string().trim().min(1)).default([]),
   }).strict(),
   next_review_at: PortableDateSchema.optional(),
-}).strict();
+}).strict().superRefine((profile, ctx) => {
+  if (
+    ['private-canonical', 'sanitized-public'].includes(profile.owner_class)
+    && !profile.source_path
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['source_path'],
+      message: `${profile.owner_class} profiles require source_path`,
+    });
+  }
+});
 export type LifecycleProfile = z.infer<typeof LifecycleProfileSchema>;
 
 export const LifecycleSourceEntrySchema = z.object({

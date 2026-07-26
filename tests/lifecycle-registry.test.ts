@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { stringify as stringifyYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { hashDirectory } from '../src/profile-plan.js';
 import {
   lifecycleList,
@@ -45,6 +45,22 @@ function writeRegistry(
   }
 }
 
+function addFixtureIdentityDeclarations(root: string): void {
+  const declarations = [
+    ['registry/lifecycle/kepano/defuddle/profile.yaml', 'skills/defuddle'],
+    [
+      'registry/lifecycle/mattpocock/grill-with-docs/profile.yaml',
+      'skills/grill-with-docs',
+    ],
+  ] as const;
+  for (const [relativePath, sourcePath] of declarations) {
+    const profilePath = path.join(root, relativePath);
+    const profile = parseYaml(fs.readFileSync(profilePath, 'utf8')) as Record<string, unknown>;
+    profile.source_path = sourcePath;
+    fs.writeFileSync(profilePath, stringifyYaml(profile));
+  }
+}
+
 function minimalProfile(
   skillId: string,
   sourceRef: string,
@@ -55,6 +71,7 @@ function minimalProfile(
     skill_id: skillId,
     display_name: skillId,
     source_ref: sourceRef,
+    source_path: `skills/${skillId.split('/')[1]}`,
     owner_class: sourceRef === 'private-source' ? 'private-canonical' : 'third-party',
     learning: { current_level: 'L0', target_level: 'L0', evidence: [] },
     adoption: { scopes: [] },
@@ -67,6 +84,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aspg-lifecycle-'));
   registryRoot = path.join(tmpDir, 'registry-one');
   fs.cpSync(fixtureRoot, registryRoot, { recursive: true });
+  addFixtureIdentityDeclarations(registryRoot);
 });
 
 afterEach(() => {
@@ -163,6 +181,148 @@ describe('federated lifecycle registry', () => {
     expect(duplicates).toHaveLength(3);
     expect(duplicates[0].message).toContain('distinct ID');
     expect(snapshot.skills).toHaveLength(3);
+  });
+
+  it('rejects duplicate source_ref/source_path identity across the combined registry', () => {
+    const firstRoot = path.join(tmpDir, 'identity-one');
+    const secondRoot = path.join(tmpDir, 'identity-two');
+    writeRegistry(
+      firstRoot,
+      { shared: { source_type: 'git' } },
+      [{
+        ...minimalProfile('alpha/tool-one', 'shared'),
+        source_path: 'skills/shared-tool',
+      }],
+    );
+    writeRegistry(
+      secondRoot,
+      { shared: { source_type: 'git' } },
+      [{
+        ...minimalProfile('beta/tool-two', 'shared'),
+        source_path: 'skills/shared-tool',
+      }],
+    );
+
+    const snapshot = loadLifecycleRegistries([secondRoot, firstRoot]);
+    const diagnostic = snapshot.diagnostics.find((item) =>
+      item.code === 'unique-source-ref-source-path');
+    expect(diagnostic).toMatchObject({
+      severity: 'error',
+      skill_id: 'beta/tool-two',
+      source_ref: 'shared',
+      source_path: 'skills/shared-tool',
+      profile_path: 'registry/lifecycle/beta/tool-two/profile.yaml',
+    });
+    expect(diagnostic?.message).toContain('alpha/tool-one');
+  });
+
+  it('rejects forbidden canonical project and device suffixes with stable profile paths', () => {
+    const root = path.join(tmpDir, 'suffixes');
+    writeRegistry(
+      root,
+      { shared: { source_type: 'git' } },
+      [
+        minimalProfile('martin/tool-life-os', 'shared'),
+        minimalProfile('martin/tool-linux', 'shared'),
+        minimalProfile('martin/tool-mac-mini', 'shared'),
+        minimalProfile('martin/tool-macbook-pro', 'shared'),
+        minimalProfile('martin/tool-work-pkm', 'shared'),
+      ],
+    );
+
+    const diagnostics = loadLifecycleRegistries([root]).diagnostics
+      .filter((item) => item.code === 'forbidden-canonical-suffix');
+    expect(diagnostics.map((item) => [item.skill_id, item.profile_path])).toEqual([
+      ['martin/tool-life-os', 'registry/lifecycle/martin/tool-life-os/profile.yaml'],
+      ['martin/tool-linux', 'registry/lifecycle/martin/tool-linux/profile.yaml'],
+      ['martin/tool-mac-mini', 'registry/lifecycle/martin/tool-mac-mini/profile.yaml'],
+      ['martin/tool-macbook-pro', 'registry/lifecycle/martin/tool-macbook-pro/profile.yaml'],
+      ['martin/tool-work-pkm', 'registry/lifecycle/martin/tool-work-pkm/profile.yaml'],
+    ]);
+  });
+
+  it('rejects cross-namespace basenames unless direct lineage resolves the collision', () => {
+    const unresolvedRoot = path.join(tmpDir, 'basename-unresolved');
+    writeRegistry(
+      unresolvedRoot,
+      { shared: { source_type: 'git', pinned_revision: 'a'.repeat(40) } },
+      [
+        {
+          ...minimalProfile('anthropic/brand-guidelines', 'shared'),
+          source_path: 'upstream/brand-guidelines',
+        },
+        {
+          ...minimalProfile('martin/brand-guidelines', 'shared'),
+          source_path: 'skills/brand-guidelines',
+        },
+      ],
+    );
+    const collision = loadLifecycleRegistries([unresolvedRoot]).diagnostics.find((item) =>
+      item.code === 'cross-namespace-exposure-basename');
+    expect(collision).toMatchObject({
+      severity: 'error',
+      skill_id: 'martin/brand-guidelines',
+      profile_path: 'registry/lifecycle/martin/brand-guidelines/profile.yaml',
+    });
+
+    const resolvedRoot = path.join(tmpDir, 'basename-resolved');
+    writeRegistry(
+      resolvedRoot,
+      {
+        upstream: { source_type: 'git', pinned_revision: 'a'.repeat(40) },
+        private: { source_type: 'private-canonical', path: '.' },
+      },
+      [
+        minimalProfile('anthropic/brand-guidelines', 'upstream'),
+        {
+          ...minimalProfile('martin/brand-guidelines', 'private'),
+          owner_class: 'private-canonical',
+          disposition: {
+            relations: [{
+              type: 'localized-derivative',
+              target: 'anthropic/brand-guidelines',
+              base_revision: 'a'.repeat(40),
+            }],
+          },
+        },
+      ],
+    );
+    expect(loadLifecycleRegistries([resolvedRoot]).diagnostics
+      .some((item) => item.code === 'cross-namespace-exposure-basename')).toBe(false);
+  });
+
+  it('requires source_path for Git-backed third-party profiles but stages existence checks', () => {
+    const externalRoot = path.join(tmpDir, 'external-path');
+    const external = minimalProfile('upstream/tool', 'external');
+    delete external.source_path;
+    writeRegistry(
+      externalRoot,
+      { external: { source_type: 'git' } },
+      [external],
+    );
+    expect(loadLifecycleRegistries([externalRoot]).diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        code: 'source-path-required',
+        profile_path: 'registry/lifecycle/upstream/tool/profile.yaml',
+      }),
+    );
+
+    const privateRoot = path.join(tmpDir, 'private-path');
+    writeRegistry(
+      privateRoot,
+      { 'private-source': { source_type: 'private-canonical', path: '.' } },
+      [minimalProfile('martin/not-yet-imported', 'private-source')],
+    );
+    const privateSnapshot = loadLifecycleRegistries([privateRoot]);
+    expect(privateSnapshot.diagnostics.some((item) =>
+      item.code === 'source-skill-path-not-found')).toBe(false);
+    expect(privateSnapshot.skills[0].source_integrity.status).toBe('verified');
+    expect(privateSnapshot.skills[0].source_integrity.checks).toContainEqual({
+      check: 'source-path-declaration',
+      status: 'verified',
+      message: 'portable source_path is declared: skills/not-yet-imported',
+    });
   });
 
   it('rejects missing source refs, traversal and private summaries', () => {
