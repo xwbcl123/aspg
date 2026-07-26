@@ -18,6 +18,24 @@ describe('generated lifecycle JSON Schema', () => {
     const canonicalProjection = jsonSchemaFromZod(LifecycleProfileSchema);
     expect(generated).toMatchObject(canonicalProjection);
     expect(JSON.stringify(generated)).toContain('"x-aspg-runtime-refinements":true');
+    expect(generated).toMatchObject({
+      properties: {
+        source_path: {
+          type: 'string',
+          pattern: expect.any(String),
+          'x-aspg-runtime-refinements': true,
+        },
+      },
+    });
+    const sourcePath = (generated as {
+      properties: { source_path: { pattern: string } };
+    }).properties.source_path;
+    const pattern = new RegExp(sourcePath.pattern);
+    expect(pattern.test('.')).toBe(true);
+    expect(pattern.test('skills/example')).toBe(true);
+    expect(pattern.test('./skills/example')).toBe(false);
+    expect(pattern.test('skills/./example')).toBe(false);
+    expect(pattern.test('skills/../example')).toBe(false);
   });
 
   it('keeps all lifecycle enums in parity with their canonical Zod schemas', () => {

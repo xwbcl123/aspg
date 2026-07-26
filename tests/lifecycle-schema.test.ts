@@ -11,6 +11,7 @@ function validProfile(): LifecycleProfile {
     skill_id: 'martin/example',
     display_name: 'Example',
     source_ref: 'private-source',
+    source_path: 'skills/example',
     owner_class: 'private-canonical',
     learning: {
       current_level: 'L3',
@@ -69,6 +70,40 @@ describe('LifecycleProfileSchema', () => {
     profile.skill_id = '../example';
     profile.installed = true;
     expect(LifecycleProfileSchema.safeParse(profile).success).toBe(false);
+  });
+
+  it('requires a portable repository-relative source_path for canonical owners', () => {
+    const repositoryRoot = validProfile();
+    repositoryRoot.source_path = '.';
+    expect(LifecycleProfileSchema.safeParse(repositoryRoot).success).toBe(true);
+
+    const missing = validProfile() as unknown as Record<string, unknown>;
+    delete missing.source_path;
+    expect(LifecycleProfileSchema.safeParse(missing).success).toBe(false);
+
+    for (const invalid of [
+      '/skills/example',
+      './skills/example',
+      'skills/./example',
+      'skills/example/.',
+      '../skills/example',
+      'skills/../example',
+      'skills/example/..',
+      '..',
+      'skills\\example',
+      'C:/skills/example',
+      '~/skills/example',
+      'skills//example',
+    ]) {
+      const profile = validProfile();
+      profile.source_path = invalid;
+      expect(LifecycleProfileSchema.safeParse(profile).success).toBe(false);
+    }
+
+    const projectLocal = validProfile();
+    projectLocal.owner_class = 'project-local';
+    delete projectLocal.source_path;
+    expect(LifecycleProfileSchema.safeParse(projectLocal).success).toBe(true);
   });
 
   it('rejects a target learning level below the declared current level', () => {

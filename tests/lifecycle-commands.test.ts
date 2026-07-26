@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import {
   lifecycleListCommand,
   lifecycleNextCommand,
@@ -24,10 +25,27 @@ let originalLog: typeof console.log;
 let originalError: typeof console.error;
 let originalWarn: typeof console.warn;
 
+function addFixtureIdentityDeclarations(root: string): void {
+  const declarations = [
+    ['registry/lifecycle/kepano/defuddle/profile.yaml', 'skills/defuddle'],
+    [
+      'registry/lifecycle/mattpocock/grill-with-docs/profile.yaml',
+      'skills/grill-with-docs',
+    ],
+  ] as const;
+  for (const [relativePath, sourcePath] of declarations) {
+    const profilePath = path.join(root, relativePath);
+    const profile = parseYaml(fs.readFileSync(profilePath, 'utf8')) as Record<string, unknown>;
+    profile.source_path = sourcePath;
+    fs.writeFileSync(profilePath, stringifyYaml(profile));
+  }
+}
+
 beforeEach(() => {
   process.exitCode = undefined as unknown as number;
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aspg-lifecycle-cli-'));
   fs.cpSync(fixtureRoot, tmpDir, { recursive: true });
+  addFixtureIdentityDeclarations(tmpDir);
   output = [];
   errors = [];
   originalLog = console.log;
@@ -100,6 +118,50 @@ describe('lifecycle read-only commands', () => {
     expect(output).toEqual([]);
     expect(errors.join('\n')).toContain('--as-of');
     expect(process.exitCode).toBe(2);
+  });
+
+  it('reports declared canonical Profiles separately from materialized trees', async () => {
+    const sourcesPath = path.join(tmpDir, 'registry', 'sources.yaml');
+    const sources = parseYaml(fs.readFileSync(sourcesPath, 'utf8')) as {
+      sources: Array<Record<string, unknown>>;
+    };
+    const projectSource = sources.sources.find((source) => source.id === 'project-source')!;
+    projectSource.source_type = 'private-canonical';
+    projectSource.path = '.';
+    fs.writeFileSync(sourcesPath, stringifyYaml(sources));
+
+    const profilePath = path.join(
+      tmpDir,
+      'registry',
+      'lifecycle',
+      'martin',
+      'visual-mail',
+      'profile.yaml',
+    );
+    const profile = parseYaml(fs.readFileSync(profilePath, 'utf8')) as Record<string, unknown>;
+    profile.owner_class = 'private-canonical';
+    profile.source_path = 'skills/visual-mail';
+    fs.writeFileSync(profilePath, stringifyYaml(profile));
+
+    await lifecycleValidateCommand({ registry: [tmpDir], json: true });
+    expect(JSON.parse(output.join('\n')).canonical_inventory).toEqual({
+      declared_profile_count: 1,
+      declared_source_path_count: 1,
+      canonical_tree_count: 0,
+    });
+
+    fs.mkdirSync(path.join(tmpDir, 'skills', 'visual-mail'), { recursive: true });
+    output = [];
+    await lifecycleStatusCommand({
+      registry: [tmpDir],
+      asOf: '2026-09-01',
+      json: true,
+    });
+    expect(JSON.parse(output.join('\n')).canonical_inventory).toEqual({
+      declared_profile_count: 1,
+      declared_source_path_count: 1,
+      canonical_tree_count: 1,
+    });
   });
 
   it('keeps unavailable Life-OS mapping non-fatal but fails a mapped missing note', async () => {

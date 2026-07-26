@@ -1,4 +1,5 @@
 import {
+  canonicalTreeInventory,
   lifecycleList,
   lifecycleRecommendations,
   lifecycleStatus,
@@ -47,12 +48,14 @@ function effectiveAsOf(value: string | undefined): string | undefined {
 
 export async function lifecycleValidateCommand(opts: LifecycleCommandOptions): Promise<void> {
   const snapshot = load(opts);
+  const canonicalInventory = canonicalTreeInventory(snapshot);
   const output = {
     schema_version: 1,
     valid: !hasErrors(snapshot),
     registry_roots: snapshot.registry_roots,
     evidence_resolution_mode: snapshot.evidence_resolution_mode,
     profiles: snapshot.skills.length,
+    canonical_inventory: canonicalInventory,
     diagnostics: snapshot.diagnostics,
     evidence_resolution: snapshot.skills.map((dossier) => ({
       skill_id: dossier.skill_id,
@@ -81,6 +84,12 @@ export async function lifecycleValidateCommand(opts: LifecycleCommandOptions): P
   else {
     emitDiagnostics(snapshot);
     console.log(`Lifecycle profiles: ${output.profiles}`);
+    console.log(
+      `Canonical Profiles/paths/trees: `
+      + `${canonicalInventory.declared_profile_count}/`
+      + `${canonicalInventory.declared_source_path_count}/`
+      + `${canonicalInventory.canonical_tree_count}`,
+    );
     console.log(`Validation: ${output.valid ? 'valid' : 'invalid'}`);
     console.log(`Evidence gaps: ${output.evidence_gaps.length}`);
     console.log(`Evidence unverified: ${output.evidence_unverified.length}`);
@@ -164,6 +173,12 @@ export async function lifecycleStatusCommand(opts: LifecycleCommandOptions): Pro
   else {
     emitDiagnostics(snapshot);
     console.log(`Lifecycle Skills: ${status.total_skills}`);
+    console.log(
+      `Canonical Profiles/paths/trees: `
+      + `${status.canonical_inventory.declared_profile_count}/`
+      + `${status.canonical_inventory.declared_source_path_count}/`
+      + `${status.canonical_inventory.canonical_tree_count}`,
+    );
     console.log(`Validation: ${status.valid ? 'valid' : 'invalid'}`);
     console.log(`Evidence gaps: ${status.evidence_gaps}`);
     console.log(`Learning: ${JSON.stringify(status.learning)}`);

@@ -1,0 +1,36 @@
+version: 1
+portfolio: test-portfolio
+command_maturity:
+  portfolio_plan: mvp
+  portfolio_apply: future
+concurrency:
+  activation_lock: device-local
+sources:
+  private:
+    kind: git
+    repository: git@example.test:private/skills.git
+    privacy: private
+skills:
+  martin/audio-transcriber:
+    source: private
+    path: skills/audio-transcriber
+    ownership: managed-link
+    exposure_name: audio-transcriber
+    description_chars: 120
+    capabilities: [audio-transcription]
+profiles:
+  default:
+    include: [martin/audio-transcriber]
+    exclude: []
+    budgets:
+      max_skills: 4
+      max_description_chars: 1000
+deployments:
+  life-os:
+    project_ref: life-os-project
+    profiles: [default]
+    include: []
+    exclude: []
+projects:
+  life-os-project:
+    expected_vault: life-os

@@ -18,10 +18,15 @@ beforeEach(() => {
 afterEach(() => {
   process.chdir(origCwd);
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  process.exitCode = undefined;
   vi.restoreAllMocks();
 });
 
-async function runDoctor(): Promise<{ stdout: string; stderr: string }> {
+async function runDoctor(): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number | undefined;
+}> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const origLog = console.log;
@@ -32,14 +37,19 @@ async function runDoctor(): Promise<{ stdout: string; stderr: string }> {
   console.warn = (...args: unknown[]) => stderr.push(args.join(' '));
   process.exitCode = undefined as unknown as number;
 
-  // Re-import to get fresh module
-  const { doctorCommand } = await import('../src/commands/doctor.js');
-  await doctorCommand();
-
-  console.log = origLog;
-  console.error = origError;
-  console.warn = origWarn;
-  return { stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  try {
+    const { doctorCommand } = await import('../src/commands/doctor.js');
+    await doctorCommand();
+    return {
+      stdout: stdout.join('\n'),
+      stderr: stderr.join('\n'),
+      exitCode: process.exitCode,
+    };
+  } finally {
+    console.log = origLog;
+    console.error = origError;
+    console.warn = origWarn;
+  }
 }
 
 describe('doctor — native vendor redundancy detection', () => {
@@ -98,7 +108,7 @@ describe('doctor — bridge vendor health check', () => {
     expect(stdout).toContain('claude');
   });
 
-  it('should report SSOT marker pollution distinctly from copy out-of-sync', async () => {
+  it('should quarantine a non-Windows copy and report SSOT pollution separately', async () => {
     const ssotPath = path.join(tmpDir, '.agents', 'skills');
     const claudePath = path.join(tmpDir, '.claude', 'skills');
     fs.writeFileSync(path.join(ssotPath, 'skill.txt'), 'fresh');
@@ -108,7 +118,44 @@ describe('doctor — bridge vendor health check', () => {
 
     const { stderr } = await runDoctor();
     expect(stderr).toContain('SSOT polluted by copy-fallback marker');
-    expect(stderr).toContain('copy fallback check blocked by SSOT marker pollution');
+    expect(stderr).toContain('copy fallback is unsupported on');
     expect(stderr).not.toContain('copy fallback, OUT OF SYNC');
+  });
+
+  it('reports a foreign bridge link without changing it', async () => {
+    const foreignTarget = path.join(tmpDir, 'foreign-skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(foreignTarget);
+    fs.mkdirSync(path.dirname(claudePath), { recursive: true });
+    fs.symlinkSync(foreignTarget, claudePath, 'dir');
+
+    const { stderr, exitCode } = await runDoctor();
+    expect(stderr).toContain('foreign or unrecorded link; refusing mutation');
+    expect(exitCode).toBe(1);
+    expect(fs.readlinkSync(claudePath)).toBe(foreignTarget);
+  });
+
+  it('reports a broken ASPG-managed bridge without mutating it', async () => {
+    const missingTarget = path.join(tmpDir, 'removed-skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(missingTarget);
+    await createLink(missingTarget, claudePath);
+    fs.rmdirSync(missingTarget);
+
+    const { stderr, exitCode } = await runDoctor();
+    expect(stderr).toContain('.claude/skills — broken link');
+    expect(exitCode).toBe(1);
+    expect(fs.lstatSync(claudePath).isSymbolicLink()).toBe(true);
+  });
+
+  it('counts a symlinked Skill directory in the SSOT', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const canonicalSkill = path.join(tmpDir, 'canonical-skill');
+    fs.mkdirSync(canonicalSkill);
+    fs.writeFileSync(path.join(canonicalSkill, 'SKILL.md'), '# linked');
+    fs.symlinkSync(canonicalSkill, path.join(ssotPath, 'linked-skill'), 'dir');
+
+    const { stdout } = await runDoctor();
+    expect(stdout).toContain('.agents/skills/ exists (1 skill(s))');
   });
 });

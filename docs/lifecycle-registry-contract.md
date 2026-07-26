@@ -46,6 +46,14 @@ an ID-keyed map or as an array whose entries contain `id` or `source_id`.
 Each profile's `source_ref` is checked against the catalog in the same owner
 root. Source IDs are not implicitly borrowed from another root.
 
+Combined validation also rejects canonical IDs whose basename ends in
+`-life-os`, `-work-pkm`, `-mac-mini`, `-macbook-pro` or `-linux`. A basename
+shared across namespaces is rejected unless a direct lineage relation
+(`configure`, `wrap`, `fork`, `localized-derivative` or `absorb`) connects the
+Profiles. Portfolio validation remains responsible for proving any
+deployment-specific mutual-exclusion policy; such policy is never stored in a
+Lifecycle Profile.
+
 ## Profile v1
 
 ```yaml
@@ -53,6 +61,7 @@ schema_version: 1
 skill_id: mattpocock/grill-with-docs
 display_name: Grill With Docs
 source_ref: mattpocock-skills
+source_path: skills/grill-with-docs
 owner_class: third-party
 
 learning:
@@ -110,6 +119,40 @@ in Work-PKM and sandbox in Life-OS; an absent project has no scope. ASPG derives
 `aggregate_adoption` for catalog summaries but never stores it in a profile.
 Lifecycle records never contain `installed`, `exposed`, `loaded`, absolute
 device paths or runtime activation state.
+
+`source_path` is a portable, forward-slash, repository-relative declaration.
+It is required for `private-canonical`, `sanitized-public` and Git-backed
+`third-party` Profiles. Together, `(source_ref, source_path)` is the canonical
+content identity and must be unique across every registry supplied in one
+validation run. Project, device, revision and install location do not contribute
+to Lifecycle identity.
+
+The exact value `.` declares that the Skill is the source repository root.
+No other current-directory or parent-directory segment is valid: `./skill`,
+`a/./b`, `a/.`, `..`, `../skill` and `a/../b` are rejected. Non-root paths
+must already be normalized repository-relative paths.
+
+Validation is deliberately staged during canonical import. The declaration is
+an error-level requirement now, but a missing canonical tree is not checked for
+`private-canonical` or `sanitized-public` sources until the content-import
+phase. Initialized `git-submodule` sources continue to receive immediate,
+read-only path-existence and containment checks. This lets all private Profiles
+declare their future canonical paths before all trees have been imported,
+without weakening the identity contract or writing deployment state into
+Lifecycle.
+
+`lifecycle validate` and `lifecycle status` expose that distinction as
+`canonical_inventory`:
+
+- `declared_profile_count` counts `private-canonical` and `sanitized-public`
+  Profiles;
+- `declared_source_path_count` counts those Profiles with a portable
+  `source_path`;
+- `canonical_tree_count` counts only paths that currently resolve to a
+  directory inside the declared canonical source root.
+
+A declared-only tree does not become a validation error during the staged
+import, but it is never reported as materialized.
 
 Relation direction is exact: **the current profile Skill is `<relation>` of
 `target`**. A localized derivative therefore records its upstream target on the

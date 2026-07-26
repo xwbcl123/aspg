@@ -1,0 +1,12 @@
+version: 1
+devices:
+  test-device:
+    platform: linux
+    state_root: __STATE_ROOT__
+    source_roots:
+      private: __SOURCE_ROOT__
+    project_roots:
+      life-os-project: __PROJECT_ROOT__
+    backends:
+      managed-link: symlink
+      managed-materialized: materialize
