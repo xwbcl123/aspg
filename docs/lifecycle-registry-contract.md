@@ -141,6 +141,19 @@ declare their future canonical paths before all trees have been imported,
 without weakening the identity contract or writing deployment state into
 Lifecycle.
 
+`lifecycle validate` and `lifecycle status` expose that distinction as
+`canonical_inventory`:
+
+- `declared_profile_count` counts `private-canonical` and `sanitized-public`
+  Profiles;
+- `declared_source_path_count` counts those Profiles with a portable
+  `source_path`;
+- `canonical_tree_count` counts only paths that currently resolve to a
+  directory inside the declared canonical source root.
+
+A declared-only tree does not become a validation error during the staged
+import, but it is never reported as materialized.
+
 Relation direction is exact: **the current profile Skill is `<relation>` of
 `target`**. A localized derivative therefore records its upstream target on the
 derivative profile. ASPG checks target existence across all supplied roots,

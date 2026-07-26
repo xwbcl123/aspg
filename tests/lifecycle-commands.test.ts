@@ -120,6 +120,50 @@ describe('lifecycle read-only commands', () => {
     expect(process.exitCode).toBe(2);
   });
 
+  it('reports declared canonical Profiles separately from materialized trees', async () => {
+    const sourcesPath = path.join(tmpDir, 'registry', 'sources.yaml');
+    const sources = parseYaml(fs.readFileSync(sourcesPath, 'utf8')) as {
+      sources: Array<Record<string, unknown>>;
+    };
+    const projectSource = sources.sources.find((source) => source.id === 'project-source')!;
+    projectSource.source_type = 'private-canonical';
+    projectSource.path = '.';
+    fs.writeFileSync(sourcesPath, stringifyYaml(sources));
+
+    const profilePath = path.join(
+      tmpDir,
+      'registry',
+      'lifecycle',
+      'martin',
+      'visual-mail',
+      'profile.yaml',
+    );
+    const profile = parseYaml(fs.readFileSync(profilePath, 'utf8')) as Record<string, unknown>;
+    profile.owner_class = 'private-canonical';
+    profile.source_path = 'skills/visual-mail';
+    fs.writeFileSync(profilePath, stringifyYaml(profile));
+
+    await lifecycleValidateCommand({ registry: [tmpDir], json: true });
+    expect(JSON.parse(output.join('\n')).canonical_inventory).toEqual({
+      declared_profile_count: 1,
+      declared_source_path_count: 1,
+      canonical_tree_count: 0,
+    });
+
+    fs.mkdirSync(path.join(tmpDir, 'skills', 'visual-mail'), { recursive: true });
+    output = [];
+    await lifecycleStatusCommand({
+      registry: [tmpDir],
+      asOf: '2026-09-01',
+      json: true,
+    });
+    expect(JSON.parse(output.join('\n')).canonical_inventory).toEqual({
+      declared_profile_count: 1,
+      declared_source_path_count: 1,
+      canonical_tree_count: 1,
+    });
+  });
+
   it('keeps unavailable Life-OS mapping non-fatal but fails a mapped missing note', async () => {
     await lifecycleValidateCommand({
       registry: [tmpDir],

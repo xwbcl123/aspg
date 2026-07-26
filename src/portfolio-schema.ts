@@ -37,6 +37,15 @@ function looksAbsolute(value: string): boolean {
     || /^file:/i.test(value);
 }
 
+function isSameOrWithinAbsolute(parent: string, candidate: string): boolean {
+  const pathApi = path.win32.isAbsolute(parent) || path.win32.isAbsolute(candidate)
+    ? path.win32
+    : path.posix;
+  const relative = pathApi.relative(pathApi.normalize(parent), pathApi.normalize(candidate));
+  return relative === ''
+    || (!relative.startsWith('..') && !pathApi.isAbsolute(relative));
+}
+
 function rejectAbsoluteStrings(
   value: unknown,
   ctx: z.RefinementCtx,
@@ -120,6 +129,15 @@ export const PortableRelativePathSchema = z.string().min(1).superRefine((value, 
   }
 });
 
+/**
+ * A Skill may occupy its source repository root. Other Portfolio paths retain
+ * the stricter non-root relative-path contract.
+ */
+export const PortfolioSkillPathSchema = z.union([
+  z.literal('.'),
+  PortableRelativePathSchema,
+]);
+
 export const AbsoluteDevicePathSchema = z.string().min(1).refine(
   (value) => path.posix.isAbsolute(value) || path.win32.isAbsolute(value),
   'device registry paths must be absolute',
@@ -133,7 +151,7 @@ export const PortfolioSourceSchema = z.object({
 
 export const PortfolioSkillSchema = z.object({
   source: PortfolioPortableIdSchema,
-  path: PortableRelativePathSchema,
+  path: PortfolioSkillPathSchema,
   ownership: RuntimeOwnershipModeSchema,
   exposure_name: PortfolioPortableIdSchema,
   description_chars: z.number().int().nonnegative(),
@@ -178,7 +196,7 @@ export const PortfolioManifestSchema = z.object({
     portfolio_apply: z.literal('future'),
   }).strict(),
   concurrency: z.object({
-    activation_lock: PortableRelativePathSchema,
+    activation_lock: z.literal('device-local'),
   }).strict(),
   sources: z.record(PortfolioPortableIdSchema, PortfolioSourceSchema),
   skills: z.record(CanonicalSkillIdSchema, PortfolioSkillSchema),
@@ -196,7 +214,7 @@ export const PortfolioLockedSourceSchema = z.object({
 
 export const PortfolioLockedSkillSchema = z.object({
   source: PortfolioPortableIdSchema,
-  path: PortableRelativePathSchema,
+  path: PortfolioSkillPathSchema,
   source_revision: GitRevisionSchema,
   tree_hash: SkillTreeHashSchema,
   executable_files: z.array(PortableRelativePathSchema).default([]),
@@ -287,6 +305,7 @@ export type ProjectBinding = z.infer<typeof ProjectBindingSchema>;
 
 export const PortfolioDeviceSchema = z.object({
   platform: z.enum(['darwin', 'linux', 'win32']),
+  state_root: AbsoluteDevicePathSchema,
   source_roots: z.record(PortfolioPortableIdSchema, AbsoluteDevicePathSchema),
   project_roots: z.record(PortfolioPortableIdSchema, AbsoluteDevicePathSchema),
   backends: z.object({
@@ -303,6 +322,23 @@ export const PortfolioDeviceSchema = z.object({
       path: ['backends', 'managed-link'],
       message: `${device.platform} managed-link deployments require symlink`,
     });
+  }
+  for (const [kind, roots] of [
+    ['source_roots', device.source_roots],
+    ['project_roots', device.project_roots],
+  ] as const) {
+    for (const [rootId, rootPath] of Object.entries(roots)) {
+      if (
+        isSameOrWithinAbsolute(rootPath, device.state_root)
+        || isSameOrWithinAbsolute(device.state_root, rootPath)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['state_root'],
+          message: `device-local state_root must not overlap ${kind}.${rootId}`,
+        });
+      }
+    }
   }
 });
 

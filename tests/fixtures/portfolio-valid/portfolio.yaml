@@ -4,7 +4,7 @@ command_maturity:
   portfolio_plan: mvp
   portfolio_apply: future
 concurrency:
-  activation_lock: .aspg/portfolio-activation.lock
+  activation_lock: device-local
 sources:
   private:
     kind: git

@@ -6,6 +6,7 @@ import {
   PortfolioDeviceRegistrySchema,
   PortfolioLockSchema,
   PortfolioManifestSchema,
+  PortfolioSkillPathSchema,
   ProjectBindingSchema,
 } from '../src/portfolio-schema.js';
 import { migratePortfolioDocument } from '../src/portfolio-migrations.js';
@@ -71,11 +72,48 @@ describe('Portfolio v1 schemas', () => {
     );
   });
 
+  it('accepts an exact repository-root Skill path without weakening traversal checks', () => {
+    expect(PortfolioSkillPathSchema.parse('.')).toBe('.');
+    expect(PortfolioSkillPathSchema.parse('skills/example')).toBe('skills/example');
+
+    for (const invalid of [
+      '',
+      '..',
+      '../skills/example',
+      './skills/example',
+      'skills/./example',
+      'skills/../example',
+      '/skills/example',
+      'C:/skills/example',
+      '~/skills/example',
+      'skills\\example',
+      'skills//example',
+    ]) {
+      expect(PortfolioSkillPathSchema.safeParse(invalid).success).toBe(false);
+    }
+
+    const markdown = fs.readFileSync(docsPath, 'utf-8');
+    const manifest = example(markdown, 'Portfolio Manifest') as {
+      skills: Record<string, { path: string }>;
+    };
+    const lock = example(markdown, 'Portfolio Lock') as {
+      skills: Record<string, { path: string }>;
+    };
+    manifest.skills['martin/audio-transcriber'].path = '.';
+    lock.skills['martin/audio-transcriber'].path = '.';
+    expect(PortfolioManifestSchema.parse(manifest).skills['martin/audio-transcriber'].path)
+      .toBe('.');
+    expect(PortfolioLockSchema.parse(lock).skills['martin/audio-transcriber'].path)
+      .toBe('.');
+  });
+
   it('requires absolute paths and safe managed-link backends in device registries', () => {
     const markdown = fs.readFileSync(docsPath, 'utf-8');
     const registry = example(markdown, 'Device Registry') as {
       devices: Record<string, {
+        state_root: string;
         source_roots: Record<string, string>;
+        project_roots: Record<string, string>;
         backends: Record<string, string>;
       }>;
     };
@@ -89,6 +127,23 @@ describe('Portfolio v1 schemas', () => {
     expect(() => PortfolioDeviceRegistrySchema.parse(registry)).toThrow(
       /require symlink/,
     );
+
+    registry.devices['mac-mini'].backends['managed-link'] = 'symlink';
+    registry.devices['mac-mini'].state_root = '/srv/vaults/Life-OS/.aspg';
+    expect(() => PortfolioDeviceRegistrySchema.parse(registry)).toThrow(
+      /state_root must not overlap project_roots/,
+    );
+  });
+
+  it('requires an explicitly device-local activation lock scope', () => {
+    const markdown = fs.readFileSync(docsPath, 'utf-8');
+    const manifest = example(markdown, 'Portfolio Manifest') as {
+      concurrency: { activation_lock: string };
+    };
+    expect(PortfolioManifestSchema.parse(manifest).concurrency.activation_lock)
+      .toBe('device-local');
+    manifest.concurrency.activation_lock = '.aspg/portfolio-activation.lock';
+    expect(() => PortfolioManifestSchema.parse(manifest)).toThrow();
   });
 
   it('requires complete migration exceptions', () => {

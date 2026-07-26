@@ -19,6 +19,7 @@ import {
   type EvidenceGateResult,
   type EvidenceResolutionStatus,
 } from './lifecycle-evidence.js';
+import { forbiddenCanonicalSuffix } from './canonical-identity.js';
 
 export type LifecycleDiagnosticSeverity = 'error' | 'warning';
 
@@ -66,6 +67,7 @@ export interface LifecycleDossier {
   unverified_evidence: string[];
   target_missing_evidence: string[];
   source_integrity: SourceIntegrity;
+  canonical_tree_state: 'materialized' | 'declared-only' | 'not-applicable';
 }
 
 export interface LifecycleRegistrySnapshot {
@@ -123,6 +125,12 @@ interface SourceEntry {
   skill_paths?: Record<string, string>;
 }
 
+export interface CanonicalTreeInventory {
+  declared_profile_count: number;
+  declared_source_path_count: number;
+  canonical_tree_count: number;
+}
+
 const PROFILE_NAMES = new Set(['profile.yaml', 'profile.yml']);
 const WINDOWS_ABSOLUTE = /^[a-zA-Z]:[\\/]/;
 const URI_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
@@ -145,13 +153,6 @@ const DERIVATIVE_RELATIONS = new Set([
   'absorb',
 ]);
 const GIT_BACKED_SOURCE_TYPES = new Set(['git', 'git-submodule']);
-const FORBIDDEN_CANONICAL_SUFFIXES = [
-  'life-os',
-  'work-pkm',
-  'mac-mini',
-  'macbook-pro',
-  'linux',
-] as const;
 const BASENAME_RESOLVING_RELATIONS = new Set([
   'configure',
   'wrap',
@@ -706,10 +707,39 @@ function sourceIntegrity(
   return { status, checks };
 }
 
+function canonicalTreeState(
+  profile: LifecycleProfile,
+  registryRoot: string,
+  source: SourceEntry | undefined,
+): LifecycleDossier['canonical_tree_state'] {
+  if (!['private-canonical', 'sanitized-public'].includes(profile.owner_class)) {
+    return 'not-applicable';
+  }
+  if (!profile.source_path) return 'declared-only';
+
+  const sourcePath = source?.path ?? '.';
+  if (path.isAbsolute(sourcePath) || WINDOWS_ABSOLUTE.test(sourcePath)) {
+    return 'declared-only';
+  }
+  const ownerRoot = path.resolve(registryRoot);
+  const canonicalRoot = path.resolve(ownerRoot, sourcePath);
+  const candidate = path.resolve(canonicalRoot, profile.source_path);
+  if (!isWithin(ownerRoot, canonicalRoot) || !isWithin(canonicalRoot, candidate)) {
+    return 'declared-only';
+  }
+  try {
+    if (!fs.statSync(candidate).isDirectory()) return 'declared-only';
+    if (!fs.statSync(canonicalRoot).isDirectory()) return 'declared-only';
+    return isWithin(fs.realpathSync(canonicalRoot), fs.realpathSync(candidate))
+      ? 'materialized'
+      : 'declared-only';
+  } catch {
+    return 'declared-only';
+  }
+}
+
 function canonicalNameDiagnostics(dossier: LifecycleDossier): LifecycleDiagnostic[] {
-  const basename = dossier.skill_id.split('/')[1];
-  const suffix = FORBIDDEN_CANONICAL_SUFFIXES.find((candidate) =>
-    basename.endsWith(`-${candidate}`));
+  const suffix = forbiddenCanonicalSuffix(dossier.skill_id);
   if (!suffix) return [];
   return [{
     severity: 'error',
@@ -932,6 +962,11 @@ export function loadLifecycleRegistries(
         diagnostics,
         profilePath,
       );
+      const canonicalState = canonicalTreeState(
+        profile,
+        registryRoot,
+        catalog?.get(profile.source_ref),
+      );
       const dossier: LifecycleDossier = {
         skill_id: profile.skill_id,
         registry_root: registryRoot,
@@ -947,6 +982,7 @@ export function loadLifecycleRegistries(
           (item) => evidence.lookup.get(item) ?? 'missing',
         ),
         source_integrity: integrity,
+        canonical_tree_state: canonicalState,
       };
       parsedDossiers.push(dossier);
       const duplicate = seen.get(profile.skill_id);
@@ -1019,6 +1055,20 @@ function count(values: string[]) {
   );
 }
 
+export function canonicalTreeInventory(
+  snapshot: LifecycleRegistrySnapshot,
+): CanonicalTreeInventory {
+  const canonical = snapshot.skills.filter((dossier) =>
+    dossier.canonical_tree_state !== 'not-applicable');
+  return {
+    declared_profile_count: canonical.length,
+    declared_source_path_count: canonical.filter((dossier) =>
+      dossier.profile.source_path !== undefined).length,
+    canonical_tree_count: canonical.filter((dossier) =>
+      dossier.canonical_tree_state === 'materialized').length,
+  };
+}
+
 export function lifecycleStatus(snapshot: LifecycleRegistrySnapshot, asOf: string) {
   PortableDateSchema.parse(asOf);
   const scopes = snapshot.skills.flatMap((dossier) => dossier.profile.adoption.scopes);
@@ -1030,6 +1080,7 @@ export function lifecycleStatus(snapshot: LifecycleRegistrySnapshot, asOf: strin
     errors: snapshot.diagnostics.filter((diagnostic) => diagnostic.severity === 'error').length,
     warnings: snapshot.diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length,
     evidence_resolution_mode: snapshot.evidence_resolution_mode,
+    canonical_inventory: canonicalTreeInventory(snapshot),
     learning: count(snapshot.skills.map((dossier) => dossier.profile.learning.current_level)),
     aggregate_adoption: count(snapshot.skills.map((dossier) => dossier.aggregate_adoption)),
     freshness: count(snapshot.skills.map((dossier) => dossier.profile.freshness.status)),

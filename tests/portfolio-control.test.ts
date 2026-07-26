@@ -31,6 +31,7 @@ let registryPath: string;
 let sourceRoot: string;
 let skillRoot: string;
 let projectRoot: string;
+let stateRoot: string;
 
 function readObject(filePath: string): any {
   return parse(fs.readFileSync(filePath, 'utf-8'));
@@ -62,6 +63,7 @@ beforeEach(() => {
   sourceRoot = path.join(tmpDir, 'source', 'private');
   skillRoot = path.join(sourceRoot, 'skills', 'audio-transcriber');
   projectRoot = path.join(tmpDir, 'project', 'Life-OS');
+  stateRoot = path.join(tmpDir, 'device-state');
   fs.chmodSync(path.join(skillRoot, 'scripts', 'transcribe.sh'), 0o755);
 
   const digest = hashSkillSubtree(skillRoot);
@@ -73,7 +75,8 @@ beforeEach(() => {
     registryPath,
     fs.readFileSync(registryPath, 'utf-8')
       .replace('__SOURCE_ROOT__', sourceRoot)
-      .replace('__PROJECT_ROOT__', projectRoot),
+      .replace('__PROJECT_ROOT__', projectRoot)
+      .replace('__STATE_ROOT__', stateRoot),
   );
 });
 
@@ -108,6 +111,17 @@ describe('Portfolio control plane', () => {
       health: 'not-deployed',
     });
     expect(first.lock_acquired).toBe(false);
+    expect(first.activation_lock).toBe(
+      path.join(
+        fs.realpathSync(tmpDir),
+        'device-state',
+        'locks',
+        'test-portfolio-life-os.lock',
+      ),
+    );
+    expect(
+      first.activation_lock?.startsWith(`${fs.realpathSync(projectRoot)}${path.sep}`),
+    ).toBe(false);
     expect(first.writes_performed).toBe(0);
 
     const status = buildPortfolioStatus(options());
@@ -144,6 +158,23 @@ describe('Portfolio control plane', () => {
     expect(result.valid).toBe(true);
     expect(result.projects[0].configured_root).toBe(alias);
     expect(result.projects[0].realpath).toBe(fs.realpathSync(projectRoot));
+  });
+
+  it('refuses a device state root that resolves into a project through a symlink', () => {
+    const insideProject = path.join(projectRoot, '.device-state');
+    const alias = path.join(tmpDir, 'device-state-alias');
+    fs.mkdirSync(insideProject);
+    fs.symlinkSync(insideProject, alias, 'dir');
+    updateObject(registryPath, (registry) => {
+      registry.devices['test-device'].state_root = alias;
+    });
+
+    const validation = validatePortfolio(options());
+    expect(validation.diagnostics.map((diagnostic) => diagnostic.code))
+      .toContain('device-state-root-overlap');
+    expect(
+      buildPortfolioPlan({ ...options(), deployment: 'life-os' }).activation_lock,
+    ).toBeNull();
   });
 
   it('rejects two project identities resolving to one real directory', () => {
@@ -210,6 +241,22 @@ describe('Portfolio control plane', () => {
     });
     expect(validatePortfolio(options()).diagnostics.map((diagnostic) => diagnostic.code))
       .toContain('canonical-suffix-forbidden');
+  });
+
+  it('uses delimiter-aware suffix classification shared with Lifecycle', () => {
+    const replacement = 'martin/gnulinux';
+    updateObject(manifestPath, (manifest) => {
+      manifest.skills[replacement] = manifest.skills['martin/audio-transcriber'];
+      delete manifest.skills['martin/audio-transcriber'];
+      manifest.profiles.default.include = [replacement];
+    });
+    updateObject(lockPath, (lock) => {
+      lock.skills[replacement] = lock.skills['martin/audio-transcriber'];
+      delete lock.skills['martin/audio-transcriber'];
+      lock.deployments['life-os'].resolved_skills = [replacement];
+    });
+    expect(validatePortfolio(options()).diagnostics.map((diagnostic) => diagnostic.code))
+      .not.toContain('canonical-suffix-forbidden');
   });
 
   it('rejects exposure basename collisions inside one deployment', () => {

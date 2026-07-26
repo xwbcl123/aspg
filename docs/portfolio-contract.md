@@ -12,7 +12,7 @@ v1 deliberately has no `apply` command.
 | Portfolio Manifest | committed, no absolute paths | desired Skills, Profiles, deployments and budgets |
 | Portfolio Lock | committed, no absolute paths | one source/path/revision/subtree hash per canonical Skill |
 | Project Binding | committed inside `<project>/.aspg/portfolio.yaml` | deployment and Portfolio repository revision used by that project |
-| Device Registry | device-local and ignored by Git | absolute source and project roots plus install backends |
+| Device Registry | device-local and ignored by Git | absolute state, source and project roots plus install backends |
 
 Project roots and source roots are resolved with `realpath`. Two project IDs
 may not resolve to the same directory. Every deployment binding must name the
@@ -28,7 +28,7 @@ command_maturity:
   portfolio_plan: mvp
   portfolio_apply: future
 concurrency:
-  activation_lock: .aspg/portfolio-activation.lock
+  activation_lock: device-local
 sources:
   private:
     kind: git
@@ -93,11 +93,39 @@ subtree. The SHA-256 stream includes each entry's portable relative path, file
 type, file bytes or symlink-target bytes, and regular-file executable bit.
 `executable_files` is independently compared with the observed subtree.
 
+A non-root Skill hashes every filesystem entry; names such as `.git`, `.aspg`
+and managed-link sidecars are ordinary Skill content at every depth.
+
+A repository-root Skill uses `path: .` and must supply its pinned 40-character
+Git revision. ASPG uses `git ls-tree` at that revision as the tracked path
+universe, then hashes the corresponding worktree bytes, types and executable
+modes. Only top-level repository control state (`.git/`, `.aspg/`,
+`.aspg-copy-fallback` and managed-link sidecars) is excluded. Nested control
+names that are tracked remain part of the digest and executable manifest;
+untracked nested control content fails closed.
+
+Untracked build output is excluded only when a `.gitignore` that is itself
+tracked at the pinned revision matches it **and** its worktree bytes, file type
+and executable mode exactly equal the pinned blob. A dirty `.gitignore` may
+change the visible digest, but it may never authorize an exclusion; if one of
+its new rules matches content, hashing fails closed. Other untracked content
+also fails closed. If the Git root, pinned revision, tracked paths, pinned
+ignore blob or ignore provenance cannot be verified, no digest is returned.
+This keeps equivalent clones stable across gitignored `.venv/`, `__pycache__/`
+and `dist/` output without a broad filename ignore list or a lock-authoring
+bypass.
+
 The Manifest and Lock must contain the same canonical Skill set. Each Skill has
 exactly one Lock entry; deployment records contain only canonical IDs and may
 not select divergent Skill sets. An active migration exception is shown as a
 warning. Missing fields, unknown references and an exception whose
 `expires_at` is on or before `--as-of` fail closed.
+
+`--as-of` is an operator-supplied reproducibility input, not an anti-tamper
+clock. Backdating it can make an exception that is expired today appear active
+in a historical report. Every result echoes the effective date; compliance and
+rollout gates must supply a trusted current date and must not treat a backdated
+run as current health evidence.
 
 ## Example: Project Binding
 
@@ -116,6 +144,7 @@ version: 1
 devices:
   mac-mini:
     platform: darwin
+    state_root: /srv/aspg/device-state
     source_roots:
       private: /srv/aspg/Martin-brew-skills-private
     project_roots:
@@ -129,6 +158,19 @@ Absolute paths are rejected everywhere except the Device Registry. On Darwin
 and Linux, `managed-link` requires `symlink`; `copy` is never a managed-link
 fallback.
 
+`concurrency.activation_lock: device-local` is a scope token, never a
+project-relative path. The concrete lock is resolved below the selected
+device's absolute `state_root` as
+`locks/<portfolio>-<deployment>.lock`. `state_root` must not overlap any source
+or project root, which prevents a Life-OS lock from being placed inside its
+Google Drive tree. The operator must choose a local-filesystem path outside any
+synced File Provider; existing path ancestors are resolved with `realpath`, and
+a symlink back into a project/source root is rejected.
+
+Windows copy bridges are a deferred compatibility limitation in v1. A copied
+bridge has no idempotent refresh ownership record, so it must be removed
+manually before refresh. ASPG must not overwrite or merge it in place.
+
 ## Deterministic resolution
 
 For a deployment, ASPG unions its named Profile includes and direct includes,
@@ -137,8 +179,11 @@ individually; the deployment must also fit the sum of its selected Profile
 budgets. Unknown Skill/Profile/source/project/deployment references fail.
 
 Within a deployment, two selected canonical Skills may not share an
-`exposure_name`. Canonical IDs ending in `-life-os`, `-work-pkm`, `-mac-mini`,
-`-macbook-pro` or `-linux-server` are rejected.
+`exposure_name`. Canonical IDs ending in the delimited project/device suffixes
+`-life-os`, `-work-pkm`, `-mac-mini`, `-macbook-pro`, `-linux` or
+`-linux-server` are rejected. Substrings without the `-` delimiter, such as
+`gnulinux`, are not suffix matches. Lifecycle and Portfolio use the same
+predicate.
 
 The read-only commands are:
 

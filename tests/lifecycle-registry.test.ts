@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { hashDirectory } from '../src/profile-plan.js';
 import {
+  canonicalTreeInventory,
   lifecycleList,
   lifecycleRecommendations,
   lifecycleStatus,
@@ -323,6 +324,22 @@ describe('federated lifecycle registry', () => {
       check: 'source-path-declaration',
       status: 'verified',
       message: 'portable source_path is declared: skills/not-yet-imported',
+    });
+    expect(canonicalTreeInventory(privateSnapshot)).toEqual({
+      declared_profile_count: 1,
+      declared_source_path_count: 1,
+      canonical_tree_count: 0,
+    });
+
+    fs.mkdirSync(path.join(privateRoot, 'skills', 'not-yet-imported'), {
+      recursive: true,
+    });
+    const materializedSnapshot = loadLifecycleRegistries([privateRoot]);
+    expect(materializedSnapshot.skills[0].canonical_tree_state).toBe('materialized');
+    expect(canonicalTreeInventory(materializedSnapshot)).toEqual({
+      declared_profile_count: 1,
+      declared_source_path_count: 1,
+      canonical_tree_count: 1,
     });
   });
 

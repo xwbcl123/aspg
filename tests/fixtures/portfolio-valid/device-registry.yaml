@@ -2,6 +2,7 @@ version: 1
 devices:
   test-device:
     platform: linux
+    state_root: __STATE_ROOT__
     source_roots:
       private: __SOURCE_ROOT__
     project_roots:

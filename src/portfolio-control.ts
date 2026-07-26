@@ -17,6 +17,7 @@ import {
 } from './portfolio-schema.js';
 import { hashSkillSubtree, type SkillSubtreeDigest } from './portfolio-hash.js';
 import type { InstallBackend, RuntimeOwnershipMode } from './profile-schema.js';
+import { forbiddenCanonicalSuffix } from './canonical-identity.js';
 
 export type PortfolioDiagnosticSeverity = 'error' | 'warning';
 
@@ -80,6 +81,7 @@ interface PortfolioState {
   lock: PortfolioLock;
   registry: PortfolioDeviceRegistry;
   deviceId: string;
+  deviceStateRoot: string | null;
   asOf: string;
   projects: Map<string, PortfolioResolvedProject>;
   skills: Map<string, PortfolioResolvedSkill>;
@@ -188,14 +190,6 @@ export interface PortfolioDeploymentView {
   writes_performed: 0;
 }
 
-const FORBIDDEN_CANONICAL_SUFFIXES = [
-  '-life-os',
-  '-work-pkm',
-  '-mac-mini',
-  '-macbook-pro',
-  '-linux-server',
-];
-
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -262,6 +256,24 @@ function safeRealpath(candidate: string): string | null {
   } catch {
     return null;
   }
+}
+
+function resolveWithExistingAncestor(candidate: string): string {
+  let current = path.resolve(candidate);
+  const suffix: string[] = [];
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error(`no existing ancestor for device-local path: ${candidate}`);
+    }
+    suffix.unshift(path.basename(current));
+    current = parent;
+  }
+  return path.join(fs.realpathSync(current), ...suffix);
+}
+
+function pathsOverlap(first: string, second: string): boolean {
+  return isWithin(first, second) || isWithin(second, first);
 }
 
 function equalSets(first: string[], second: string[]): boolean {
@@ -456,6 +468,7 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
   const skills = new Map<string, PortfolioResolvedSkill>();
   const deployments = new Map<string, PortfolioResolvedDeployment>();
   const device = registry.devices[options.deviceId];
+  let deviceStateRoot: string | null = null;
 
   if (!device) {
     addDiagnostic(
@@ -544,6 +557,36 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
         realpathOwners.set(realpath, projectRef);
       }
     }
+
+    try {
+      const candidateStateRoot = resolveWithExistingAncestor(device.state_root);
+      const protectedRoots = [
+        ...[...projects.values()].flatMap((project) =>
+          project.realpath ? [project.realpath] : []),
+        ...Object.values(device.source_roots).flatMap((sourceRoot) => {
+          const realpath = safeRealpath(sourceRoot);
+          return realpath ? [realpath] : [];
+        }),
+      ];
+      if (protectedRoots.some((protectedRoot) =>
+        pathsOverlap(protectedRoot, candidateStateRoot))) {
+        addDiagnostic(
+          diagnostics,
+          'error',
+          'device-state-root-overlap',
+          'device-local state_root resolves inside or above a source/project root',
+        );
+      } else {
+        deviceStateRoot = candidateStateRoot;
+      }
+    } catch (error) {
+      addDiagnostic(
+        diagnostics,
+        'error',
+        'device-state-root-unavailable',
+        (error as Error).message,
+      );
+    }
   }
 
   const manifestSkillIds = Object.keys(manifest.skills).sort(compareText);
@@ -551,8 +594,7 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
   for (const skillId of manifestSkillIds) {
     const definition = manifest.skills[skillId];
     const locked = lock.skills[skillId];
-    const name = skillId.split('/')[1];
-    if (FORBIDDEN_CANONICAL_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
+    if (forbiddenCanonicalSuffix(skillId)) {
       addDiagnostic(
         diagnostics,
         'error',
@@ -615,7 +657,12 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
         } else {
           sourcePath = candidateRealpath;
           try {
-            digest = hashSkillSubtree(candidateRealpath);
+            digest = hashSkillSubtree(
+              candidateRealpath,
+              definition.path === '.'
+                ? { rootSkill: true, revision: locked?.source_revision }
+                : undefined,
+            );
           } catch (error) {
             addDiagnostic(
               diagnostics,
@@ -870,6 +917,7 @@ function buildState(options: PortfolioControlOptions): PortfolioState {
     lock,
     registry,
     deviceId: options.deviceId,
+    deviceStateRoot,
     asOf,
     projects,
     skills,
@@ -967,8 +1015,12 @@ function planFromState(state: PortfolioState, deploymentName: string): Portfolio
     project_realpath: deployment?.project_realpath ?? null,
     selected_profiles: deployment?.selected_profiles ?? [],
     command_maturity: state.manifest.command_maturity.portfolio_plan,
-    activation_lock: project?.realpath
-      ? path.join(project.realpath, state.manifest.concurrency.activation_lock)
+    activation_lock: state.deviceStateRoot
+      ? path.join(
+        state.deviceStateRoot,
+        'locks',
+        `${state.manifest.portfolio}-${deploymentName}.lock`,
+      )
       : null,
     lock_acquired: false,
     budgets: deployment?.budgets ?? {
