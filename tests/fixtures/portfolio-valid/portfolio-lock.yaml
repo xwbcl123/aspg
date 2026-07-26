@@ -1,0 +1,17 @@
+version: 1
+sources:
+  private:
+    revision: 0123456789abcdef0123456789abcdef01234567
+skills:
+  martin/audio-transcriber:
+    source: private
+    path: skills/audio-transcriber
+    source_revision: 0123456789abcdef0123456789abcdef01234567
+    tree_hash: __TREE_HASH__
+    executable_files:
+      - scripts/transcribe.sh
+    overlay_hash: null
+deployments:
+  life-os:
+    resolved_skills: [martin/audio-transcriber]
+exceptions: []

@@ -18,6 +18,12 @@ import {
   lifecycleStatusCommand,
   lifecycleValidateCommand,
 } from './commands/lifecycle.js';
+import {
+  portfolioDeploymentViewCommand,
+  portfolioPlanCommand,
+  portfolioStatusCommand,
+  portfolioValidateCommand,
+} from './commands/portfolio.js';
 
 const program = new Command();
 
@@ -167,6 +173,53 @@ const lifecycleNext = lifecycleReadCommand(
 lifecycleNext
   .action(async (opts) => {
     await lifecycleNextCommand(opts);
+  });
+
+const portfolio = program
+  .command('portfolio')
+  .description('Inspect and plan the cross-project Portfolio without runtime writes');
+
+function portfolioReadCommand(name: string, description: string): Command {
+  return portfolio
+    .command(name)
+    .description(description)
+    .requiredOption('--device <id>', 'Device identifier in the local Portfolio registry')
+    .option('--manifest <path>', 'Portfolio Manifest (default: .aspg/portfolio.yaml)')
+    .option('--lock <path>', 'Portfolio Lock (default: .aspg/portfolio-lock.yaml)')
+    .option('--device-registry <path>', 'Machine-local Portfolio device registry')
+    .option('--as-of <YYYY-MM-DD>', 'Effective date for deterministic exception checks')
+    .option('--json', 'Emit deterministic JSON');
+}
+
+portfolioReadCommand('validate', 'Validate Portfolio contracts and all deployments')
+  .action(async (opts) => {
+    await portfolioValidateCommand(opts);
+  });
+
+portfolio
+  .command('plan')
+  .description('Plan one deployment without mutating its runtime')
+  .requiredOption('--deployment <id>', 'Deployment identifier')
+  .requiredOption('--device <id>', 'Device identifier in the local Portfolio registry')
+  .option('--manifest <path>', 'Portfolio Manifest (default: .aspg/portfolio.yaml)')
+  .option('--lock <path>', 'Portfolio Lock (default: .aspg/portfolio-lock.yaml)')
+  .option('--device-registry <path>', 'Machine-local Portfolio device registry')
+  .option('--as-of <YYYY-MM-DD>', 'Effective date for deterministic exception checks')
+  .option('--json', 'Emit deterministic JSON')
+  .action(async (opts) => {
+    await portfolioPlanCommand(opts.deployment, opts);
+  });
+
+portfolioReadCommand('status', 'Summarize every Portfolio deployment')
+  .requiredOption('--all', 'Inspect all deployments')
+  .action(async (opts) => {
+    await portfolioStatusCommand(opts);
+  });
+
+portfolioReadCommand('deployment-view', 'Show the flattened generated deployment view')
+  .requiredOption('--all', 'Inspect all deployments')
+  .action(async (opts) => {
+    await portfolioDeploymentViewCommand(opts);
   });
 
 program.parse();

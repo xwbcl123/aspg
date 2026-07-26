@@ -1,0 +1,5 @@
+version: 1
+portfolio:
+  repository: git@example.test:portfolio/control.git
+  revision: fedcba9876543210fedcba9876543210fedcba98
+  deployment: life-os
