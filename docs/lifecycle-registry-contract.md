@@ -127,6 +127,11 @@ content identity and must be unique across every registry supplied in one
 validation run. Project, device, revision and install location do not contribute
 to Lifecycle identity.
 
+The exact value `.` declares that the Skill is the source repository root.
+No other current-directory or parent-directory segment is valid: `./skill`,
+`a/./b`, `a/.`, `..`, `../skill` and `a/../b` are rejected. Non-root paths
+must already be normalized repository-relative paths.
+
 Validation is deliberately staged during canonical import. The declaration is
 an error-level requirement now, but a missing canonical tree is not checked for
 `private-canonical` or `sanitized-public` sources until the content-import

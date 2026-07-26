@@ -73,14 +73,23 @@ describe('LifecycleProfileSchema', () => {
   });
 
   it('requires a portable repository-relative source_path for canonical owners', () => {
+    const repositoryRoot = validProfile();
+    repositoryRoot.source_path = '.';
+    expect(LifecycleProfileSchema.safeParse(repositoryRoot).success).toBe(true);
+
     const missing = validProfile() as unknown as Record<string, unknown>;
     delete missing.source_path;
     expect(LifecycleProfileSchema.safeParse(missing).success).toBe(false);
 
     for (const invalid of [
       '/skills/example',
+      './skills/example',
+      'skills/./example',
+      'skills/example/.',
       '../skills/example',
       'skills/../example',
+      'skills/example/..',
+      '..',
       'skills\\example',
       'C:/skills/example',
       '~/skills/example',

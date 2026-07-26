@@ -27,6 +27,15 @@ describe('generated lifecycle JSON Schema', () => {
         },
       },
     });
+    const sourcePath = (generated as {
+      properties: { source_path: { pattern: string } };
+    }).properties.source_path;
+    const pattern = new RegExp(sourcePath.pattern);
+    expect(pattern.test('.')).toBe(true);
+    expect(pattern.test('skills/example')).toBe(true);
+    expect(pattern.test('./skills/example')).toBe(false);
+    expect(pattern.test('skills/./example')).toBe(false);
+    expect(pattern.test('skills/../example')).toBe(false);
   });
 
   it('keeps all lifecycle enums in parity with their canonical Zod schemas', () => {

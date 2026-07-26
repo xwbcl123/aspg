@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -518,5 +519,63 @@ describe('federated lifecycle registry', () => {
     expect(codes).toContain('source-submodule-missing');
     expect(codes).toContain('source-gitlink-unavailable');
     expect(snapshot.skills[0].source_integrity.status).toBe('failed');
+  });
+
+  it('verifies a repository-root Skill path against the git-submodule source root', () => {
+    const sourceRoot = path.join(tmpDir, 'root-skill-submodule');
+    const checkout = path.join(sourceRoot, 'sources', 'root-skill');
+    fs.mkdirSync(checkout, { recursive: true });
+    execFileSync('git', ['-C', checkout, 'init', '--quiet']);
+    fs.writeFileSync(path.join(checkout, 'SKILL.md'), '# Root Skill\n');
+    execFileSync('git', ['-C', checkout, 'add', 'SKILL.md']);
+    execFileSync('git', [
+      '-C',
+      checkout,
+      '-c',
+      'user.name=ASPG Test',
+      '-c',
+      'user.email=aspg-test@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'root skill fixture',
+    ]);
+    const revision = execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
+
+    execFileSync('git', ['-C', sourceRoot, 'init', '--quiet']);
+    execFileSync('git', [
+      '-C',
+      sourceRoot,
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `160000,${revision},sources/root-skill`,
+    ]);
+    writeRegistry(
+      sourceRoot,
+      {
+        'root-source': {
+          source_type: 'git-submodule',
+          path: 'sources/root-skill',
+          pinned_revision: revision,
+          skill_paths: { 'upstream/root-skill': '.' },
+        },
+      },
+      [{
+        ...minimalProfile('upstream/root-skill', 'root-source'),
+        source_path: '.',
+      }],
+    );
+
+    const snapshot = loadLifecycleRegistries([sourceRoot]);
+    expect(snapshot.diagnostics.filter((item) => item.severity === 'error')).toEqual([]);
+    expect(snapshot.skills[0].source_integrity.status).toBe('verified');
+    expect(snapshot.skills[0].source_integrity.checks).toContainEqual({
+      check: 'skill-path',
+      status: 'verified',
+      message: 'pinned source contains .',
+    });
   });
 });

@@ -141,7 +141,7 @@ export const DispositionRelationSchema = z.object({
 export type DispositionRelation = z.infer<typeof DispositionRelationSchema>;
 
 const skillIdPattern = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
-const portableSourcePathPattern = /^[^/\\\u0000-\u001f\u007f]+(?:\/[^/\\\u0000-\u001f\u007f]+)*$/;
+const portableSourcePathPattern = /^(?:\.|(?!(?:\.{1,2})(?:\/|$))[^/\\\u0000-\u001f\u007f]+(?:\/(?!(?:\.{1,2})(?:\/|$))[^/\\\u0000-\u001f\u007f]+)*)$/;
 
 export const PortableSourcePathSchema = z.string()
   .min(1, 'source_path must not be empty')
@@ -154,8 +154,9 @@ export const PortableSourcePathSchema = z.string()
     'source_path must not have leading or trailing whitespace',
   )
   .refine(
-    (value) => !value.split('/').some((segment) => segment === '.' || segment === '..'),
-    'source_path must not contain "." or ".." segments',
+    (value) => value === '.'
+      || !value.split('/').some((segment) => segment === '.' || segment === '..'),
+    'source_path may be exactly "." for a repository-root Skill but must not contain "." or ".." segments',
   )
   .refine(
     (value) => !/^[a-zA-Z]:/.test(value),
