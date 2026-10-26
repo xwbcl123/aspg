@@ -74,6 +74,45 @@ describe('createLink', () => {
     expect(fs.readFileSync(link, 'utf-8')).toBe('preserve');
   });
 
+  it('refuses a git symlink placeholder by default', async () => {
+    const target = path.join(tmpDir, 'skills');
+    const link = path.join(tmpDir, 'skills-link');
+    const placeholder = '/Users/martin/workspace/Work-PKM-Vault/.agents/skills';
+    fs.mkdirSync(target);
+    fs.writeFileSync(link, placeholder);
+
+    await expect(createLink(target, link)).rejects.toMatchObject({
+      code: 'ASPG_LINK_DESTINATION_LEGACY_PLACEHOLDER',
+    });
+    expect(fs.readFileSync(link, 'utf-8')).toBe(placeholder);
+  });
+
+  it('adopts a git symlink placeholder when explicitly allowed', async () => {
+    const target = path.join(tmpDir, 'skills');
+    const link = path.join(tmpDir, 'skills-link');
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, 'SKILL.md'), 'canonical');
+    fs.writeFileSync(link, '/Users/martin/workspace/Work-PKM-Vault/.agents/skills');
+
+    const result = await createLink(target, link, { adoptLegacyPlaceholder: true });
+
+    expect(['symlink', 'junction']).toContain(result.method);
+    expect(isValidLink(link, target)).toBe(true);
+    expect(fs.existsSync(path.join(link, 'SKILL.md'))).toBe(true);
+    expect(fs.readdirSync(tmpDir).filter((name) => name.includes('.aspg-placeholder-')))
+      .toEqual([]);
+  });
+
+  it('does not adopt a path file whose name does not match the target', async () => {
+    const target = path.join(tmpDir, 'skills');
+    const link = path.join(tmpDir, 'notes.txt');
+    fs.mkdirSync(target);
+    fs.writeFileSync(link, '/Users/martin/notes.txt');
+
+    await expect(createLink(target, link, { adoptLegacyPlaceholder: true }))
+      .rejects.toMatchObject({ code: 'ASPG_LINK_DESTINATION_FILE' });
+  });
+
   it('refuses a foreign link even when it points to the requested target', async () => {
     const target = path.join(tmpDir, 'source');
     const link = path.join(tmpDir, 'link');

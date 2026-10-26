@@ -55,8 +55,15 @@ program
   .command('apply')
   .description('Rescan SSOT and refresh all vendor bridges (idempotent)')
   .option('--dry-run', 'Preview changes without making them')
+  .option(
+    '--adopt-legacy-placeholder',
+    'Replace git symlink placeholders left by core.symlinks=false checkouts',
+  )
   .action(async (opts) => {
-    await applyCommand({ dryRun: opts.dryRun });
+    await applyCommand({
+      dryRun: opts.dryRun,
+      adoptLegacyPlaceholder: opts.adoptLegacyPlaceholder,
+    });
   });
 
 program

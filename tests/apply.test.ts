@@ -24,6 +24,7 @@ afterEach(() => {
 
 async function runApply(
   dryRun = false,
+  opts: { adoptLegacyPlaceholder?: boolean } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | undefined }> {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -37,7 +38,7 @@ async function runApply(
 
   try {
     const { applyCommand } = await import('../src/commands/apply.js');
-    await applyCommand({ dryRun });
+    await applyCommand({ dryRun, ...opts });
     return {
       stdout: stdout.join('\n'),
       stderr: stderr.join('\n'),
@@ -104,6 +105,30 @@ describe('apply — native vendor regression guard', () => {
     expect(stderr).toBe('');
     expect(exitCode).toBeUndefined();
     expect(stdout).toContain('Created .claude/skills');
+    expect(isValidLink(claudePath, ssotPath)).toBe(true);
+  });
+
+  it('refuses a git symlink placeholder without the adoption flag', async () => {
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(path.dirname(claudePath), { recursive: true });
+    fs.writeFileSync(claudePath, '/Users/martin/workspace/Work-PKM-Vault/.agents/skills');
+
+    const { stderr, exitCode } = await runApply();
+    expect(stderr).toContain('ASPG_LINK_DESTINATION_LEGACY_PLACEHOLDER');
+    expect(exitCode).toBe(2);
+    expect(fs.readFileSync(claudePath, 'utf-8'))
+      .toBe('/Users/martin/workspace/Work-PKM-Vault/.agents/skills');
+  });
+
+  it('adopts a git symlink placeholder with --adopt-legacy-placeholder', async () => {
+    const ssotPath = path.join(tmpDir, '.agents', 'skills');
+    const claudePath = path.join(tmpDir, '.claude', 'skills');
+    fs.mkdirSync(path.dirname(claudePath), { recursive: true });
+    fs.writeFileSync(claudePath, '/Users/martin/workspace/Work-PKM-Vault/.agents/skills');
+
+    const { stderr, exitCode } = await runApply(false, { adoptLegacyPlaceholder: true });
+    expect(stderr).toBe('');
+    expect(exitCode).toBeUndefined();
     expect(isValidLink(claudePath, ssotPath)).toBe(true);
   });
 

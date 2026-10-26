@@ -17,10 +17,11 @@ import { SSOT_DIR, getBridgeVendors } from '../vendors.js';
 
 interface ApplyOptions {
   dryRun?: boolean;
+  adoptLegacyPlaceholder?: boolean;
 }
 
 export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
-  const { dryRun = false } = opts;
+  const { dryRun = false, adoptLegacyPlaceholder = false } = opts;
   const root = process.cwd();
   const ssotPath = path.join(root, SSOT_DIR);
 
@@ -42,7 +43,7 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
       if (method === 'copy') {
         syncCopyFallback(ssotPath, linkPath, true);
       } else if (!(isAspgManaged(linkPath) && isValidLink(linkPath, ssotPath))) {
-        await createLink(ssotPath, linkPath, { dryRun: true });
+        await createLink(ssotPath, linkPath, { dryRun: true, adoptLegacyPlaceholder });
       }
     } catch (err) {
       console.error(`✗ Refusing to refresh ${linkDir} (${vendor}): ${(err as Error).message}`);
@@ -101,7 +102,7 @@ export async function applyCommand(opts: ApplyOptions = {}): Promise<void> {
       console.log(`[dry-run] Would create or replace managed ${linkDir} → ${SSOT_DIR}/`);
     } else {
       try {
-        const result = await createLink(ssotPath, linkPath);
+        const result = await createLink(ssotPath, linkPath, { adoptLegacyPlaceholder });
         console.log(`✓ Created ${linkDir} → ${SSOT_DIR}/ [${result.method}] (${vendor})`);
       } catch (err) {
         console.error(`✗ Failed to create ${linkDir} (${vendor}): ${(err as Error).message}`);

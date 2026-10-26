@@ -22,6 +22,15 @@ export interface LinkResult {
 export interface CreateLinkOptions {
   dryRun?: boolean;
   platform?: NodeJS.Platform;
+  /**
+   * Replace a legacy git symlink placeholder instead of refusing it.
+   *
+   * A `git checkout` with `core.symlinks=false` (the Windows default without
+   * Developer Mode) materialises a mode-120000 entry as an ordinary file whose
+   * only content is the link target. Adoption is opt-in because the artifact is
+   * indistinguishable from user data by file mode alone.
+   */
+  adoptLegacyPlaceholder?: boolean;
 }
 
 interface ManagedLinkRecord {
@@ -146,9 +155,60 @@ type ExistingDestination =
   | { kind: 'copy'; target?: string }
   | { kind: 'foreign-link' }
   | { kind: 'directory' }
-  | { kind: 'file' };
+  | { kind: 'file' }
+  | { kind: 'legacy-link-placeholder'; content: string };
 
-function inspectDestination(linkPath: string): ExistingDestination {
+const LEGACY_PLACEHOLDER_MAX_BYTES = 4096;
+const ABSOLUTE_PATH_PREFIX = /^(?:[A-Za-z]:[\\/]|\/)/;
+
+/**
+ * Recognise a legacy git symlink placeholder: a regular file whose entire
+ * content is one absolute path whose final segment matches the expected target.
+ *
+ * Cross-OS checkouts store a foreign absolute path (`/Users/...` on a Windows
+ * host), so the content can never resolve to the local target — recognition has
+ * to stay structural rather than equality-based. Everything else is left as an
+ * opaque `file` and refused.
+ */
+function legacyPlaceholderContent(
+  linkPath: string,
+  stat: fs.Stats,
+  expectedTarget?: string,
+): string | undefined {
+  if (!expectedTarget || !stat.isFile() || stat.size > LEGACY_PLACEHOLDER_MAX_BYTES) {
+    return undefined;
+  }
+  let content: string;
+  try {
+    content = fs.readFileSync(linkPath, 'utf-8').trim();
+  } catch {
+    return undefined;
+  }
+  if (!content || content.includes('\n') || !ABSOLUTE_PATH_PREFIX.test(content)) {
+    return undefined;
+  }
+  const normalized = content.replace(/\\/g, '/').replace(/\/+$/, '');
+  const lastSegment = normalized.slice(normalized.lastIndexOf('/') + 1);
+  return lastSegment === path.basename(expectedTarget) ? content : undefined;
+}
+
+/**
+ * Report whether `linkPath` is a legacy git symlink placeholder for
+ * `expectedTarget`, returning its recorded content. Diagnostic use only.
+ */
+export function detectLegacyPlaceholder(
+  linkPath: string,
+  expectedTarget: string,
+): string | undefined {
+  const stat = lstatIfPresent(linkPath);
+  if (!stat) return undefined;
+  return legacyPlaceholderContent(linkPath, stat, path.resolve(expectedTarget));
+}
+
+function inspectDestination(
+  linkPath: string,
+  expectedTarget?: string,
+): ExistingDestination {
   const stat = lstatIfPresent(linkPath);
   if (!stat) return { kind: 'absent' };
   if (stat.isSymbolicLink()) {
@@ -169,6 +229,10 @@ function inspectDestination(linkPath: string): ExistingDestination {
     }
     return { kind: 'directory' };
   }
+  const placeholder = legacyPlaceholderContent(linkPath, stat, expectedTarget);
+  if (placeholder !== undefined) {
+    return { kind: 'legacy-link-placeholder', content: placeholder };
+  }
   return { kind: 'file' };
 }
 
@@ -184,6 +248,14 @@ function refusalForDestination(absLink: string, destination: ExistingDestination
       throw new LinkSafetyError(
         'ASPG_LINK_DESTINATION_REAL_DIRECTORY',
         `refusing to merge into or replace a real directory: ${absLink}`,
+      );
+    case 'legacy-link-placeholder':
+      throw new LinkSafetyError(
+        'ASPG_LINK_DESTINATION_LEGACY_PLACEHOLDER',
+        'refusing to replace a git symlink placeholder'
+          + ` (core.symlinks=false checkout): ${absLink}`
+          + ` records ${JSON.stringify(destination.content)};`
+          + ' re-run "aspg apply --adopt-legacy-placeholder" to replace it',
       );
     case 'file':
       throw new LinkSafetyError(
@@ -207,6 +279,9 @@ function sameDestination(
   if (left.kind === 'managed-link' && right.kind === 'managed-link') {
     return left.record.method === right.record.method
       && left.record.target === right.record.target;
+  }
+  if (left.kind === 'legacy-link-placeholder' && right.kind === 'legacy-link-placeholder') {
+    return left.content === right.content;
   }
   return false;
 }
@@ -248,6 +323,8 @@ function createTemporaryLink(
  * - target must resolve to a directory;
  * - destination must be absent or carry a valid ASPG sidecar record;
  * - unmanaged directories, files, copy fallbacks and foreign links are refused;
+ * - legacy git symlink placeholders are refused unless
+ *   `adoptLegacyPlaceholder` is set, and are parked (not deleted) before the swap;
  * - the new link is created at a unique same-directory path and renamed;
  * - darwin/linux never degrade to copy.
  */
@@ -266,16 +343,19 @@ export async function createLink(
 
   assertTargetDirectory(absTarget);
 
-  const initial = inspectDestination(absLink);
+  const adoptPlaceholder = options.adoptLegacyPlaceholder ?? false;
+  const initial = inspectDestination(absLink, absTarget);
   const markerPath = managedMarkerPath(absLink);
 
   if (initial.kind === 'managed-link' && initial.record.target === absTarget) {
     return { method: initial.record.method, target: absTarget, link: absLink };
   }
-  if (!['absent', 'managed-link'].includes(initial.kind)) {
+  const adoptedPlaceholder = initial.kind === 'legacy-link-placeholder' && adoptPlaceholder;
+  if (!adoptedPlaceholder && !['absent', 'managed-link'].includes(initial.kind)) {
     refusalForDestination(absLink, initial);
   }
-  if (initial.kind === 'absent' && lstatIfPresent(markerPath)) {
+  if ((initial.kind === 'absent' || initial.kind === 'legacy-link-placeholder')
+    && lstatIfPresent(markerPath)) {
     throw new LinkSafetyError(
       'ASPG_LINK_ORPHAN_MARKER',
       `refusing activation while an orphan managed-link marker exists: ${markerPath}`,
@@ -292,6 +372,7 @@ export async function createLink(
   const tempMarker = temporarySibling(absLink, 'marker');
   let method: LinkMethod | undefined;
   let activated = false;
+  let parkedPlaceholder: string | undefined;
   const previousRawTarget = initial.kind === 'managed-link'
     ? fs.readlinkSync(absLink)
     : undefined;
@@ -306,7 +387,7 @@ export async function createLink(
       });
     }
 
-    const beforeRename = inspectDestination(absLink);
+    const beforeRename = inspectDestination(absLink, absTarget);
     if (!sameDestination(initial, beforeRename)) {
       throw new LinkSafetyError(
         'ASPG_LINK_DESTINATION_CHANGED',
@@ -314,10 +395,26 @@ export async function createLink(
       );
     }
 
+    if (adoptedPlaceholder) {
+      // Park the placeholder first so a failed swap can restore it verbatim.
+      parkedPlaceholder = temporarySibling(absLink, 'placeholder');
+      try {
+        fs.renameSync(absLink, parkedPlaceholder);
+      } catch (error) {
+        parkedPlaceholder = undefined;
+        throw new LinkSafetyError(
+          'ASPG_LINK_PLACEHOLDER_PARK_FAILED',
+          `failed to park legacy symlink placeholder: ${absLink}`,
+          { cause: error },
+        );
+      }
+    }
+
     try {
       fs.renameSync(tempLink, absLink);
       activated = true;
     } catch (error) {
+      restoreParkedPlaceholder();
       throw new LinkSafetyError(
         'ASPG_LINK_ATOMIC_RENAME_FAILED',
         `atomic link activation failed: ${absLink}`,
@@ -336,11 +433,13 @@ export async function createLink(
           fs.symlinkSync(previousRawTarget, absLink, initial.record.method === 'junction'
             ? 'junction'
             : 'dir');
+        } else {
+          restoreParkedPlaceholder();
         }
         activated = false;
         throw new LinkSafetyError(
           'ASPG_LINK_MARKER_ACTIVATION_FAILED',
-          `managed-link marker activation failed; previous link restored: ${absLink}`,
+          `managed-link marker activation failed; previous destination restored: ${absLink}`,
           { cause: error },
         );
       }
@@ -350,11 +449,36 @@ export async function createLink(
   } finally {
     cleanupTemporary(tempLink);
     cleanupTemporary(tempMarker);
+    if (parkedPlaceholder) {
+      if (activated) {
+        // Successful replacement supersedes the placeholder.
+        cleanupTemporary(parkedPlaceholder);
+      } else {
+        restoreParkedPlaceholder();
+      }
+    }
     if (!activated && initial.kind === 'absent') {
       // A failed first activation must leave no destination or sidecar.
       const current = lstatIfPresent(absLink);
       if (current?.isSymbolicLink()) fs.unlinkSync(absLink);
       if (lstatIfPresent(markerPath)?.isFile()) fs.unlinkSync(markerPath);
+    }
+  }
+
+  /**
+   * Return a parked legacy placeholder to its original path. Best effort: when
+   * the destination is occupied the placeholder stays parked as a dotted
+   * sibling rather than being deleted.
+   */
+  function restoreParkedPlaceholder(): void {
+    if (!parkedPlaceholder) return;
+    const parked = parkedPlaceholder;
+    parkedPlaceholder = undefined;
+    if (lstatIfPresent(absLink)) return;
+    try {
+      fs.renameSync(parked, absLink);
+    } catch {
+      // Leave the parked file in place; never delete unverified content.
     }
   }
 }

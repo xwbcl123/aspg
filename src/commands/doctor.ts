@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   COPY_MARKER,
+  detectLegacyPlaceholder,
   getLinkMethod,
   hasCopyMarker,
   isAspgManaged,
@@ -67,7 +68,16 @@ export async function doctorCommand(): Promise<void> {
 
     const method = getLinkMethod(linkPath);
     if (!method) {
-      console.error(`✗ ${def.linkDir} — exists but not ASPG-managed (${vendor})`);
+      const placeholder = detectLegacyPlaceholder(linkPath, ssotPath);
+      if (placeholder !== undefined) {
+        console.error(
+          `✗ ${def.linkDir} — git symlink placeholder from a core.symlinks=false checkout (${vendor})`,
+        );
+        console.error(`  File content records: ${placeholder}`);
+        console.error('  Run "aspg apply --adopt-legacy-placeholder" to replace it');
+      } else {
+        console.error(`✗ ${def.linkDir} — exists but not ASPG-managed (${vendor})`);
+      }
       hasIssues = true;
       continue;
     }
